@@ -16,8 +16,8 @@ def load_config():
 
 
 def get_upstream(request_path: str) -> str | None:
-    configs = load_config()
-    for route in configs["routes"]:
+    config = load_config()
+    for route in config["routes"]:
         if request_path.startswith(route["path"]):
             return route["upstream"]
 

@@ -1,7 +1,6 @@
 # built-in
 from fastapi import status
 from fastapi import HTTPException
-from gateway.proxy import forward_request
 from contextlib import asynccontextmanager
 
 # fastapi
@@ -9,12 +8,16 @@ from fastapi import FastAPI
 from fastapi import Request
 
 # local
+from gateway.router import load_config
 from gateway.router import get_upstream
+from gateway.proxy import forward_request
+from gateway.resilience.registry import build_registry
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Startup Complete")
+    app.state.cb_registry = build_registry(load_config())
     yield
     print("Shutdown Complete")
 
@@ -35,6 +38,7 @@ async def catch_all(request: Request):
     res = await forward_request(
         request=request,
         upstream_url=upstream,
+        cb_registry=app.state.cb_registry,
     )
     return res
 
