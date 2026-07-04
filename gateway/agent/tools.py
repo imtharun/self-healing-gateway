@@ -5,20 +5,6 @@ import time
 from gateway.resilience.circuit_breaker import CircuitStatus
 
 
-def get_upstream_state(upstream_url: str, cb_registry, health_monitor) -> dict:
-    """
-    Returns current state of an upstream: CB state, health, failure count
-    """
-    cb = cb_registry[upstream_url]
-    return {
-        "upstream": upstream_url,
-        "circuit_state": cb.state.value,
-        "failure_count": cb.failure_count,
-        "failure_threshold": cb.failure_threshold,
-        "is_healthy": health_monitor.health_status.get(upstream_url),
-    }
-
-
 def open_circuit(upstream_url: str, cb_registry) -> dict:
     """
     Opens the circuit breaker for an upstream
@@ -49,6 +35,20 @@ def close_circuit(upstream_url: str, cb_registry) -> dict:
         "upstream": upstream_url,
         "new_state": "CLOSED",
         "message": f"Circuit closed for {upstream_url}. Traffic resumed.",
+    }
+
+
+def get_upstream_state(upstream_url: str, cb_registry, health_monitor) -> dict:
+    """
+    Returns current state of an upstream: CB state, health, failure count
+    """
+    cb = cb_registry[upstream_url]
+    return {
+        "upstream": upstream_url,
+        "circuit_state": cb.state.value,
+        "failure_count": cb.failure_count,
+        "failure_threshold": cb.failure_threshold,
+        "is_healthy": health_monitor.health_status.get(upstream_url),
     }
 
 
