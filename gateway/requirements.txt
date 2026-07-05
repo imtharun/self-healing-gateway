@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+httpx
+pyyaml
+pydantic
+google-genai
+aiosqlite

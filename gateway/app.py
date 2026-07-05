@@ -6,11 +6,10 @@ from datetime import datetime
 
 # third-party
 from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.middleware.cors import CORSMiddleware
 
 # local
-from gateway.agent.gemini_agent import run_healing_session
-from gateway.audit.models import HealingSession
-from gateway.audit.store import get_sessions, init_db, save_session
+from gateway.audit.store import get_sessions, init_db
 from gateway.failure_detector import FailureDetector
 from gateway.proxy import forward_request
 from gateway.resilience.health_monitor import HealthMonitor
@@ -41,6 +40,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# Add CORS for the React Dev Server
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins for development
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.get("/health")
 async def health():
@@ -50,33 +58,17 @@ async def health():
 @app.get("/gateway/health-status")
 async def health_status():
     health_data = app.state.health_monitor.health_status
-    return health_data
+    cb_registry = app.state.cb_registry
 
-
-@app.api_route("/test/heal", methods=["GET"])
-async def test_heal(request: Request):
-    session_id = str(uuid.uuid4())
-    triggered_at = datetime.now()
-
-    result = await run_healing_session(
-        upstream_url="http://localhost:9001",
-        context="Sudden failure noticed in the upstream",
-        cb_registry=app.state.cb_registry,
-        health_monitor=app.state.health_monitor,
-    )
-
-    session: HealingSession = HealingSession(
-        session_id=session_id,
-        upstream_url=result["upstream_url"],
-        triggered_at=triggered_at,
-        resolved_at=datetime.now(),
-        status=result["status"],
-        reason=result.get("reason", ""),
-        actions_taken=result.get("actions_taken", []),
-    )
-
-    await save_session(session=session)
-    return result
+    status_report = {}
+    for upstream_url, is_healthy in health_data.items():
+        cb = cb_registry.get(upstream_url)
+        status_report[upstream_url] = {
+            "is_healthy": is_healthy,
+            "circuit_state": cb.current_state.value if cb else "UNKNOWN",
+            "failure_count": cb.failure_count if cb else 0,
+        }
+    return status_report
 
 
 @app.get("/audit/sessions")

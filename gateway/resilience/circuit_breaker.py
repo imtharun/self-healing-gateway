@@ -34,16 +34,21 @@ class CircuitBreaker:
             self.state = CircuitStatus.open
             self.opened_at = time.time()
 
-    def is_open(self) -> bool:
-        if self.state == CircuitStatus.closed:
-            return False
-        elif self.state == CircuitStatus.open:
+    @property
+    def current_state(self) -> CircuitStatus:
+        if self.state == CircuitStatus.open:
             if (time.time() - self.opened_at) >= self.recovery_timeout:
-                self.state = CircuitStatus.half_open
-                return False
-            else:
-                return True
-        return False
+                return CircuitStatus.half_open
+        return self.state
+
+    def is_open(self) -> bool:
+        current = self.current_state
+        if current == CircuitStatus.closed:
+            return False
+        elif current == CircuitStatus.half_open:
+            self.state = CircuitStatus.half_open
+            return False
+        return True
 
     def __repr__(self) -> str:
         return f"CircuitBreaker(name={self.name}, state={self.state.value}, failures={self.failure_count}/{self.failure_threshold})"
