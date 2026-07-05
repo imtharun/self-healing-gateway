@@ -15,7 +15,7 @@ def open_circuit(upstream_url: str, cb_registry) -> dict:
 
     return {
         "status": "success",
-        "upstream": upstream_url,
+        "upstream_url": upstream_url,
         "new_state": "open",
         "message": f"Circuit opened for {upstream_url}. Traffic is now blocked.",
     }
@@ -32,7 +32,7 @@ def close_circuit(upstream_url: str, cb_registry) -> dict:
 
     return {
         "status": "success",
-        "upstream": upstream_url,
+        "upstream_url": upstream_url,
         "new_state": "CLOSED",
         "message": f"Circuit closed for {upstream_url}. Traffic resumed.",
     }
@@ -44,7 +44,7 @@ def get_upstream_state(upstream_url: str, cb_registry, health_monitor) -> dict:
     """
     cb = cb_registry[upstream_url]
     return {
-        "upstream": upstream_url,
+        "upstream_url": upstream_url,
         "circuit_state": cb.state.value,
         "failure_count": cb.failure_count,
         "failure_threshold": cb.failure_threshold,
@@ -63,7 +63,7 @@ def drain_upstream(upstream_url: str, cb_registry) -> dict:
 
     return {
         "status": "success",
-        "upstream": upstream_url,
+        "upstream_url": upstream_url,
         "drained": True,
         "message": f"Circuit completely drained for {upstream_url}",
     }
@@ -75,7 +75,7 @@ def mark_resolved(upstream_url: str, reason: str) -> dict:
     """
     return {
         "resolved": True,
-        "upstream": upstream_url,
+        "upstream_url": upstream_url,
         "reason": reason,
         "message": "Healing session marked as resolved.",
     }

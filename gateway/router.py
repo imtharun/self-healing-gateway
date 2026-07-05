@@ -19,6 +19,6 @@ def get_upstream(request_path: str) -> str | None:
     config = load_config()
     for route in config["routes"]:
         if request_path.startswith(route["path"]):
-            return route["upstream"]
+            return route["upstream_url"]
 
     return None
