@@ -1,4 +1,5 @@
 app2.py
 *pycache*
-*env
+.env
+.venv/
 audit/*.db
