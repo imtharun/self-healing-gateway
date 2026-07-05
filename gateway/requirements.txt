@@ -5,3 +5,6 @@ pyyaml
 pydantic
 google-genai
 aiosqlite
+python-dotenv
+pytest
+pytest-asyncio

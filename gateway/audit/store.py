@@ -1,5 +1,7 @@
 # built-in
 import json
+import os
+from pathlib import Path
 
 # third-party
 import aiosqlite
@@ -7,11 +9,17 @@ import aiosqlite
 # local
 from gateway.audit.models import HealingSession
 
-DB_PATH = "gateway/audit/audit.db"
+DB_PATH = Path(
+    os.getenv(
+        "GATEWAY_AUDIT_DB",
+        str(Path(__file__).with_name("audit.db")),
+    )
+)
 
 
 async def init_db():
     """Create the sessions table if it doesn't exist"""
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS healing_sessions (
@@ -47,6 +55,7 @@ async def save_session(session: HealingSession) -> None:
 
 
 async def get_sessions(limit: int = 50) -> list[dict]:
+    limit = max(1, min(limit, 200))
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
             """

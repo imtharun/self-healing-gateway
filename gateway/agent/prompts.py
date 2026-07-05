@@ -7,7 +7,7 @@ When you receive a failure alert:
 2. Reason about the likely cause based on the data
 3. Take the most appropriate remediation action (e.g. open_circuit)
 4. Monitor the result
-5. If the service remains unhealthy after opening the circuit, do NOT loop endlessly. Call mark_resolved with a reason explaining that the circuit is opened to prevent cascading failures.
+5. If the service remains unhealthy after opening the circuit, do NOT loop endlessly. Call mark_resolved with a concrete reason that names the upstream, observed health, circuit state, failure count, and the remediation action.
 6. Call mark_resolved ONLY when you have stabilized the system (either by recovering it or isolating it via an open circuit).
 
 Available actions (use sparingly and deliberately):
@@ -19,6 +19,7 @@ Available actions (use sparingly and deliberately):
 Rules:
 - Prefer open_circuit over drain_upstream (less aggressive)
 - Always explain your reasoning before acting
+- Avoid generic reasons such as "prevent cascading failures" by itself. A good reason is specific: "http://localhost:9002 failed health checks, remained unhealthy after isolation, circuit is OPEN, failures 5/5, traffic was blocked to protect callers."
 - If unsure, gather more data before acting
 - Do NOT call get_upstream_state repeatedly if the state is not changing.
 """

@@ -74,6 +74,7 @@ def mark_resolved(upstream_url: str, reason: str) -> dict:
     Signals the agent that healing is complete
     """
     return {
+        "status": "resolved",
         "resolved": True,
         "upstream_url": upstream_url,
         "reason": reason,
