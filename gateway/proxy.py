@@ -1,8 +1,6 @@
 # third-party
 import httpx
 from typing import Dict
-
-# fastapi
 from fastapi import status
 from fastapi import Response
 from fastapi import HTTPException

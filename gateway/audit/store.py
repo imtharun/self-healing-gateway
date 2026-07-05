@@ -56,6 +56,10 @@ async def get_sessions(limit: int = 50) -> list[dict]:
         ) as cursor:
             rows = await cursor.fetchall()
             columns = [col[0] for col in cursor.description]
-            row_dict = dict(zip(columns, row) for row in rows)
-            row_dict["actions_taken"] = json.loads(row_dict["actions_taken"] or "[]")
-            return row_dict
+
+            results = []
+            for row in rows:
+                d = dict(zip(columns, row))
+                d["actions_taken"] = json.loads(d["actions_taken"] or "[]")
+                results.append(d)
+            return results

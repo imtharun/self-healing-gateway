@@ -4,17 +4,17 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-# fastapi
+# third-party
 from fastapi import FastAPI, HTTPException, Request, status
 
+# local
 from gateway.agent.gemini_agent import run_healing_session
 from gateway.audit.models import HealingSession
-from gateway.audit.store import init_db, save_session, get_sessions
+from gateway.audit.store import get_sessions, init_db, save_session
+from gateway.failure_detector import FailureDetector
 from gateway.proxy import forward_request
 from gateway.resilience.health_monitor import HealthMonitor
 from gateway.resilience.registry import build_registry
-
-# local
 from gateway.router import get_upstream, load_config
 
 
@@ -25,12 +25,17 @@ async def lifespan(app: FastAPI):
 
     app.state.cb_registry = build_registry(load_config())
     monitor = HealthMonitor(routes=load_config()["routes"])
-    task = asyncio.create_task(monitor.start())
+    monitor_task = asyncio.create_task(monitor.start())
     app.state.health_monitor = monitor
+    detector = FailureDetector(
+        health_monitor=monitor, cb_registry=app.state.cb_registry
+    )
+    detector_task = asyncio.create_task(detector.start())
 
     yield
 
-    task.cancel()
+    monitor_task.cancel()
+    detector_task.cancel()
     print("Shutdown Complete")
 
 
@@ -73,9 +78,11 @@ async def test_heal(request: Request):
     await save_session(session=session)
     return result
 
+
 @app.get("/audit/sessions")
 async def audit_sessions():
     return await get_sessions()
+
 
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def catch_all(request: Request):
