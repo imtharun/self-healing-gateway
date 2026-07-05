@@ -63,11 +63,11 @@ async def run_healing_session(
 
     messages = [types.Content(role="user", parts=[types.Part(text=initial_message)])]
 
-    iterations, max_iterations = 0, 3
+    iterations, max_iterations = 0, 6
 
     while iterations < max_iterations:
-        response = client.aio.models.generate_content(
-            model="gemini-2.0-flash",
+        response = await client.aio.models.generate_content(
+            model="gemini-2.5-flash",
             contents=messages,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
@@ -80,8 +80,11 @@ async def run_healing_session(
 
         # Check what Gemini returned
         for part in response.candidates[0].content.parts:
+            if part.text:
+                print(f"Gemini: {part.text}")
             if part.function_call:
                 # calling tool
+                print(f"Tool call: {part.function_call.name}")
                 fn_name = part.function_call.name  # eg open_circuit
                 fn_args = dict(part.function_call.args)  # eg {"upstream_url": "..."}
 
