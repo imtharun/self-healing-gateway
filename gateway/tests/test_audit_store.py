@@ -4,9 +4,8 @@ from datetime import datetime
 # third-party
 import pytest
 
-# local
-from gateway.audit.models import HealingSession
 from gateway.audit import store
+from gateway.audit.models import HealingSession
 
 
 @pytest.mark.asyncio
@@ -21,6 +20,9 @@ async def test_save_and_get_sessions_round_trip(tmp_path, monkeypatch):
         resolved_at=datetime(2026, 1, 1, 10, 0, 5),
         status="resolved",
         reason="Circuit opened",
+        suspected_cause="Health check failed",
+        action_taken="Opened circuit",
+        operator_next_step="Inspect upstream logs",
         actions_taken=["get_upstream_state", "open_circuit"],
     )
 
@@ -32,3 +34,25 @@ async def test_save_and_get_sessions_round_trip(tmp_path, monkeypatch):
         "get_upstream_state",
         "open_circuit",
     ]
+    assert sessions[0]["suspected_cause"] == "Health check failed"
+    assert sessions[0]["action_taken"] == "Opened circuit"
+    assert sessions[0]["operator_next_step"] == "Inspect upstream logs"
+
+
+@pytest.mark.asyncio
+async def test_record_and_get_events_round_trip(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "audit.db")
+    await store.init_db()
+
+    await store.record_event(
+        event_type="circuit_closed",
+        upstream_url="http://localhost:9001",
+        message="Circuit closed after trial request.",
+        metadata={"status_code": 200},
+    )
+
+    events = await store.get_events()
+
+    assert events[0]["event_type"] == "circuit_closed"
+    assert events[0]["upstream_url"] == "http://localhost:9001"
+    assert events[0]["metadata"] == {"status_code": 200}

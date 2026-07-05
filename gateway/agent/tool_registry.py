@@ -63,7 +63,7 @@ drain_upstream_decl = types.FunctionDeclaration(
 
 mark_resolved_decl = types.FunctionDeclaration(
     name="mark_resolved",
-    description="Signals the agent that healing is complete",
+    description="Ends the healing session with a concise dashboard-ready summary of what happened and what was done",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
@@ -73,10 +73,41 @@ mark_resolved_decl = types.FunctionDeclaration(
             ),
             "reason": types.Schema(
                 type=types.Type.STRING,
-                description="Reason for resolving",
+                description=(
+                    "One concise operator-ready sentence, 12-25 words. Include "
+                    "observed signal, remediation performed, and current traffic impact. "
+                    "Do not use raw tool names or vague phrases."
+                ),
+            ),
+            "suspected_cause": types.Schema(
+                type=types.Type.STRING,
+                description=(
+                    "Short suspected cause based on observed gateway data. Use "
+                    "'unknown' if there is not enough evidence."
+                ),
+            ),
+            "action_taken": types.Schema(
+                type=types.Type.STRING,
+                description=(
+                    "Short plain-English remediation action, e.g. opened circuit, "
+                    "closed circuit, drained upstream, or monitored only."
+                ),
+            ),
+            "operator_next_step": types.Schema(
+                type=types.Type.STRING,
+                description=(
+                    "One short recommended next step for a human operator. Use "
+                    "'No immediate action needed' when appropriate."
+                ),
             ),
         },
-        required=["upstream_url", "reason"],
+        required=[
+            "upstream_url",
+            "reason",
+            "suspected_cause",
+            "action_taken",
+            "operator_next_step",
+        ],
     ),
 )
 

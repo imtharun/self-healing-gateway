@@ -22,13 +22,6 @@ load_dotenv()
 
 logger = logging.getLogger("gateway.agent")
 
-VAGUE_REASON_PHRASES = (
-    "prevent cascading failures",
-    "unhealthy service",
-    "unhealthy upstream",
-    "sudden unhealthiness",
-)
-
 
 def _get_client() -> genai.Client | None:
     api_key = os.getenv("GEMINI_API_KEY")
@@ -42,48 +35,6 @@ def _validate_upstream(upstream_url: str, cb_registry: dict) -> str:
     if upstream_url not in cb_registry:
         raise ValueError(f"Upstream is not registered: {upstream_url}")
     return upstream_url
-
-
-def _upstream_snapshot(upstream_url: str, cb_registry: dict, health_monitor) -> dict:
-    cb = cb_registry[upstream_url]
-    return {
-        "is_healthy": health_monitor.health_status.get(upstream_url),
-        "circuit_state": cb.current_state.value,
-        "failure_count": cb.failure_count,
-        "failure_threshold": cb.failure_threshold,
-    }
-
-
-def _build_detailed_reason(
-    upstream_url: str,
-    cb_registry: dict,
-    health_monitor,
-    actions_taken: list[str],
-    agent_reason: str | None = None,
-) -> str:
-    snapshot = _upstream_snapshot(upstream_url, cb_registry, health_monitor)
-    health = "unhealthy" if snapshot["is_healthy"] is False else "healthy"
-    if snapshot["is_healthy"] is None:
-        health = "unknown"
-
-    final_action = actions_taken[-1] if actions_taken else "no action"
-    reason = (
-        f"{health.title()} upstream; circuit {snapshot['circuit_state']} "
-        f"after {final_action} "
-        f"({snapshot['failure_count']}/{snapshot['failure_threshold']} failures)."
-    )
-
-    if agent_reason and not _is_vague_reason(agent_reason):
-        return reason
-    return reason
-
-
-def _is_vague_reason(reason: str | None) -> bool:
-    if not reason:
-        return True
-
-    normalized = reason.lower()
-    return any(phrase in normalized for phrase in VAGUE_REASON_PHRASES)
 
 
 def execute_tool(fn_name: str, fn_args: dict, cb_registry, health_monitor) -> dict:
@@ -103,7 +54,13 @@ def execute_tool(fn_name: str, fn_args: dict, cb_registry, health_monitor) -> di
         return drain_upstream(upstream_url=upstream_url, cb_registry=cb_registry)
     elif fn_name == "mark_resolved":
         reason = fn_args.get("reason") or "No reason provided by agent"
-        return mark_resolved(upstream_url=upstream_url, reason=reason)
+        return mark_resolved(
+            upstream_url=upstream_url,
+            reason=reason,
+            suspected_cause=fn_args.get("suspected_cause"),
+            action_taken=fn_args.get("action_taken"),
+            operator_next_step=fn_args.get("operator_next_step"),
+        )
 
     raise ValueError(f"Unsupported remediation tool: {fn_name}")
 
@@ -186,13 +143,8 @@ async def run_healing_session(
                 # If agent called mark_resolved → STOP
                 if fn_name == "mark_resolved":
                     result["actions_taken"] = actions_taken
-                    result["reason"] = _build_detailed_reason(
-                        upstream_url=upstream_url,
-                        cb_registry=cb_registry,
-                        health_monitor=health_monitor,
-                        actions_taken=actions_taken,
-                        agent_reason=result.get("reason"),
-                    )
+                    if not result.get("reason"):
+                        result["reason"] = "Gemini did not provide a healing summary."
                     return result
 
                 # send tool back to Gemini
@@ -214,11 +166,6 @@ async def run_healing_session(
     return {
         "status": "max_iteration_reached",
         "upstream_url": upstream_url,
-        "reason": _build_detailed_reason(
-            upstream_url=upstream_url,
-            cb_registry=cb_registry,
-            health_monitor=health_monitor,
-            actions_taken=actions_taken,
-        ),
+        "reason": "Gemini did not complete the healing summary before the iteration limit.",
         "actions_taken": actions_taken,
     }

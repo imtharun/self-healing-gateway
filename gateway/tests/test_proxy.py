@@ -5,7 +5,7 @@ from starlette.datastructures import Headers
 
 # local
 from gateway.proxy import _forward_headers, forward_request
-from gateway.resilience.circuit_breaker import CircuitBreaker
+from gateway.resilience.circuit_breaker import CircuitBreaker, CircuitStatus
 
 
 class FakeRequest:
@@ -62,6 +62,7 @@ def test_forward_headers_strips_hop_by_hop_headers():
 @pytest.mark.asyncio
 async def test_forward_request_preserves_body_query_and_headers(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr("gateway.proxy.record_event", AsyncEventRecorder())
     cb = CircuitBreaker(name="payments")
 
     response = await forward_request(
@@ -77,3 +78,30 @@ async def test_forward_request_preserves_body_query_and_headers(monkeypatch):
     )
     assert FakeClient.captured["content"] == b'{"amount":10}'
     assert FakeClient.captured["headers"]["x-request-id"] == "req-1"
+
+
+@pytest.mark.asyncio
+async def test_successful_half_open_trial_request_closes_circuit(monkeypatch):
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    event_recorder = AsyncEventRecorder()
+    monkeypatch.setattr("gateway.proxy.record_event", event_recorder)
+    cb = CircuitBreaker(name="payments")
+    cb.state = CircuitStatus.half_open
+
+    response = await forward_request(
+        FakeRequest(),
+        "http://upstream.local",
+        {"http://upstream.local": cb},
+    )
+
+    assert response.status_code == 200
+    assert cb.current_state == CircuitStatus.closed
+    assert event_recorder.calls[0]["event_type"] == "circuit_closed"
+
+
+class AsyncEventRecorder:
+    def __init__(self):
+        self.calls = []
+
+    async def __call__(self, **kwargs):
+        self.calls.append(kwargs)

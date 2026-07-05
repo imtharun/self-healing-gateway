@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 
 # local
-from gateway.audit.store import get_sessions, init_db
+from gateway.audit.store import get_events, get_sessions, init_db
 from gateway.failure_detector import FailureDetector
 from gateway.proxy import forward_request
 from gateway.resilience.health_monitor import HealthMonitor
@@ -85,9 +85,31 @@ async def health_status():
     return status_report
 
 
+@app.get("/gateway/summary")
+async def gateway_summary():
+    status_report = await health_status()
+    upstreams = list(status_report.values())
+    return {
+        "total_upstreams": len(upstreams),
+        "healthy_upstreams": sum(1 for item in upstreams if item["is_healthy"]),
+        "unhealthy_upstreams": sum(1 for item in upstreams if not item["is_healthy"]),
+        "open_circuits": sum(
+            1 for item in upstreams if item["circuit_state"] == "OPEN"
+        ),
+        "half_open_circuits": sum(
+            1 for item in upstreams if item["circuit_state"] == "HALF_OPEN"
+        ),
+    }
+
+
 @app.get("/audit/sessions")
 async def audit_sessions():
     return await get_sessions()
+
+
+@app.get("/audit/events")
+async def audit_events():
+    return await get_events()
 
 
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE"])
