@@ -129,7 +129,7 @@ function App() {
     <div className="dashboard-container">
       <header className="dashboard-header">
         <div>
-          <h1 className="dashboard-title">Gateway Monitor</h1>
+          <h1 className="dashboard-title">Self-Healing API Gateway</h1>
           <div className="dashboard-subtitle">Self-healing infrastructure control plane</div>
         </div>
         <div className="header-actions">
