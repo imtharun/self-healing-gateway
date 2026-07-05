@@ -69,13 +69,23 @@ def drain_upstream(upstream_url: str, cb_registry) -> dict:
     }
 
 
-def mark_resolved(upstream_url: str, reason: str) -> dict:
+def mark_resolved(
+    upstream_url: str,
+    reason: str,
+    suspected_cause: str | None = None,
+    action_taken: str | None = None,
+    operator_next_step: str | None = None,
+) -> dict:
     """
     Signals the agent that healing is complete
     """
     return {
+        "status": "resolved",
         "resolved": True,
         "upstream_url": upstream_url,
         "reason": reason,
+        "suspected_cause": suspected_cause,
+        "action_taken": action_taken,
+        "operator_next_step": operator_next_step,
         "message": "Healing session marked as resolved.",
     }

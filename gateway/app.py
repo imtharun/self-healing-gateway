@@ -1,15 +1,14 @@
 # built-in
 import asyncio
-import uuid
-from contextlib import asynccontextmanager
-from datetime import datetime
+import os
+from contextlib import asynccontextmanager, suppress
 
 # third-party
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 
 # local
-from gateway.audit.store import get_sessions, init_db
+from gateway.audit.store import get_events, get_sessions, init_db
 from gateway.failure_detector import FailureDetector
 from gateway.proxy import forward_request
 from gateway.resilience.health_monitor import HealthMonitor
@@ -22,8 +21,9 @@ async def lifespan(app: FastAPI):
     await init_db()
     print("Startup Complete")
 
-    app.state.cb_registry = build_registry(load_config())
-    monitor = HealthMonitor(routes=load_config()["routes"])
+    config = load_config()
+    app.state.cb_registry = build_registry(config)
+    monitor = HealthMonitor(routes=config["routes"])
     monitor_task = asyncio.create_task(monitor.start())
     app.state.health_monitor = monitor
     detector = FailureDetector(
@@ -35,15 +35,29 @@ async def lifespan(app: FastAPI):
 
     monitor_task.cancel()
     detector_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await monitor_task
+    with suppress(asyncio.CancelledError):
+        await detector_task
     print("Shutdown Complete")
 
 
 app = FastAPI(lifespan=lifespan)
 
-# Add CORS for the React Dev Server
+cors_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "GATEWAY_CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if origin.strip()
+]
+
+# Add CORS for the React Dev Server.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins for development
+    allow_origins=cors_origins,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1):\d+$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -71,9 +85,31 @@ async def health_status():
     return status_report
 
 
+@app.get("/gateway/summary")
+async def gateway_summary():
+    status_report = await health_status()
+    upstreams = list(status_report.values())
+    return {
+        "total_upstreams": len(upstreams),
+        "healthy_upstreams": sum(1 for item in upstreams if item["is_healthy"]),
+        "unhealthy_upstreams": sum(1 for item in upstreams if not item["is_healthy"]),
+        "open_circuits": sum(
+            1 for item in upstreams if item["circuit_state"] == "OPEN"
+        ),
+        "half_open_circuits": sum(
+            1 for item in upstreams if item["circuit_state"] == "HALF_OPEN"
+        ),
+    }
+
+
 @app.get("/audit/sessions")
 async def audit_sessions():
     return await get_sessions()
+
+
+@app.get("/audit/events")
+async def audit_events():
+    return await get_events()
 
 
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE"])

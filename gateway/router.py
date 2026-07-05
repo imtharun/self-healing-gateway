@@ -1,6 +1,6 @@
 # built-in
-from pathlib import Path
 from functools import lru_cache
+from pathlib import Path
 
 # third-party
 import yaml
@@ -8,7 +8,7 @@ import yaml
 
 @lru_cache
 def load_config():
-    config_path = Path(__file__).parent.parent / "config.yaml"
+    config_path = Path(__file__).with_name("config.yaml")
     with open(config_path, "r") as f:
         configs = yaml.safe_load(f)
 

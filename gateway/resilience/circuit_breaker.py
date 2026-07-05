@@ -1,4 +1,4 @@
-# default
+# built-in
 import time
 from enum import Enum
 
@@ -36,19 +36,21 @@ class CircuitBreaker:
 
     @property
     def current_state(self) -> CircuitStatus:
-        if self.state == CircuitStatus.open:
-            if (time.time() - self.opened_at) >= self.recovery_timeout:
-                return CircuitStatus.half_open
         return self.state
 
-    def is_open(self) -> bool:
-        current = self.current_state
-        if current == CircuitStatus.closed:
-            return False
-        elif current == CircuitStatus.half_open:
+    def can_try_recovery(self) -> bool:
+        return (
+            self.state == CircuitStatus.open
+            and self.opened_at is not None
+            and (time.time() - self.opened_at) >= self.recovery_timeout
+        )
+
+    def mark_half_open(self) -> None:
+        if self.can_try_recovery():
             self.state = CircuitStatus.half_open
-            return False
-        return True
+
+    def is_open(self) -> bool:
+        return self.current_state == CircuitStatus.open
 
     def __repr__(self) -> str:
         return f"CircuitBreaker(name={self.name}, state={self.state.value}, failures={self.failure_count}/{self.failure_threshold})"
