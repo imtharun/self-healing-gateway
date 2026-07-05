@@ -60,6 +60,7 @@ async def run_healing_session(
     Context: {context}
     Please diagnose and remediate
     """
+    actions_taken = []
 
     messages = [types.Content(role="user", parts=[types.Part(text=initial_message)])]
 
@@ -84,14 +85,17 @@ async def run_healing_session(
                 print(f"Gemini: {part.text}")
             if part.function_call:
                 # calling tool
-                print(f"Tool call: {part.function_call.name}")
                 fn_name = part.function_call.name  # eg open_circuit
                 fn_args = dict(part.function_call.args)  # eg {"upstream_url": "..."}
+
+                print(f"Tool call: {fn_name}")
+                actions_taken.append(fn_name)
 
                 result = execute_tool(fn_name, fn_args, cb_registry, health_monitor)
 
                 # If agent called mark_resolved → STOP
                 if fn_name == "mark_resolved":
+                    result["actions_taken"] = actions_taken
                     return result
 
                 # send tool back to Gemini
@@ -110,4 +114,8 @@ async def run_healing_session(
 
         iterations += 1
 
-    return {"status": "max_iteration_reached", "upstream_url": upstream_url}
+    return {
+        "status": "max_iteration_reached",
+        "upstream_url": upstream_url,
+        "actions_taken": actions_taken,
+    }

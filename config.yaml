@@ -3,9 +3,9 @@ gateway:
 
 routes:
   - path: /api/payments
-    upstream: http://localhost:9001
+    upstream_url: http://localhost:9001
     health_check: /health
 
   - path: /api/orders
-    upstream: http://localhost:9002
+    upstream_url: http://localhost:9002
     health_check: /health
