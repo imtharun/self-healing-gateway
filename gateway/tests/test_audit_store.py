@@ -50,9 +50,15 @@ async def test_record_and_get_events_round_trip(tmp_path, monkeypatch):
         message="Circuit closed after trial request.",
         metadata={"status_code": 200},
     )
+    await store.record_event(
+        event_type="health_failed",
+        upstream_url="http://localhost:9002",
+        message="Other upstream failed.",
+    )
 
-    events = await store.get_events()
+    events = await store.get_events(upstream_url="http://localhost:9001")
 
+    assert len(events) == 1
     assert events[0]["event_type"] == "circuit_closed"
     assert events[0]["upstream_url"] == "http://localhost:9001"
     assert events[0]["metadata"] == {"status_code": 200}

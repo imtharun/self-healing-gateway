@@ -6,9 +6,10 @@ from gateway.agent.gemini_agent import execute_tool, run_healing_session
 from gateway.resilience.circuit_breaker import CircuitBreaker
 
 
-def test_execute_tool_rejects_unknown_upstream():
+@pytest.mark.asyncio
+async def test_execute_tool_rejects_unknown_upstream():
     with pytest.raises(ValueError, match="not registered"):
-        execute_tool(
+        await execute_tool(
             "open_circuit",
             {"upstream_url": "http://unknown.local"},
             {"http://known.local": CircuitBreaker("known")},
@@ -31,8 +32,9 @@ async def test_run_healing_session_skips_without_api_key(monkeypatch):
     assert result["actions_taken"] == []
 
 
-def test_execute_tool_preserves_gemini_reason():
-    result = execute_tool(
+@pytest.mark.asyncio
+async def test_execute_tool_preserves_gemini_reason():
+    result = await execute_tool(
         "mark_resolved",
         {
             "upstream_url": "http://known.local",

@@ -2,23 +2,33 @@
 import asyncio
 import logging
 import uuid
-from datetime import datetime
 
 # local
 from gateway.agent.gemini_agent import run_healing_session
+from gateway.agent.incident_policy import IncidentPolicy
 from gateway.audit.models import HealingSession
-from gateway.audit.store import record_event, save_session
+from gateway.audit.store import get_events, record_event, save_session
+from gateway.time_utils import now_ist
 
 logger = logging.getLogger("gateway.failure_detector")
 
 
 class FailureDetector:
-    def __init__(self, health_monitor, cb_registry, interval=15):
+    def __init__(
+        self,
+        health_monitor,
+        cb_registry,
+        interval=15,
+        unhealthy_event_interval=60,
+    ):
         self.health_monitor = health_monitor
         self.cb_registry = cb_registry
         self.interval = interval
+        self.unhealthy_event_interval = unhealthy_event_interval
         self.previous_status = {}  # tracks previous state
+        self.last_unhealthy_event_at = {}
         self.healing_in_progress = set()  # prevents duplicate sessions
+        self.incident_policy = IncidentPolicy()
 
     async def start(self):
         while True:
@@ -38,9 +48,13 @@ class FailureDetector:
                     upstream_url=upstream_url,
                     message=f"Health check failed for {upstream_url}.",
                 )
+                self.last_unhealthy_event_at[upstream_url] = now_ist()
                 if upstream_url not in self.healing_in_progress:
                     self.healing_in_progress.add(upstream_url)
                     asyncio.create_task(self._heal(upstream_url))
+
+            elif not is_healthy:
+                await self._record_still_unhealthy_if_due(upstream_url)
 
             elif is_healthy:
                 cb = self.cb_registry.get(upstream_url)
@@ -63,14 +77,49 @@ class FailureDetector:
 
         self.previous_status = dict(self.health_monitor.health_status)
 
+    async def _record_still_unhealthy_if_due(self, upstream_url):
+        now = now_ist()
+        last_recorded_at = self.last_unhealthy_event_at.get(upstream_url)
+        if (
+            last_recorded_at
+            and (now - last_recorded_at).total_seconds()
+            < self.unhealthy_event_interval
+        ):
+            return
+
+        self.last_unhealthy_event_at[upstream_url] = now
+        cb = self.cb_registry.get(upstream_url)
+        circuit_state = cb.current_state.value if cb else "UNKNOWN"
+        await record_event(
+            event_type="health_still_unhealthy",
+            upstream_url=upstream_url,
+            message=(
+                f"{upstream_url} is still failing health checks; "
+                f"circuit remains {circuit_state}."
+            ),
+            metadata={"circuit_state": circuit_state},
+        )
+
     async def _heal(self, upstream_url):
         try:
             session_id = str(uuid.uuid4())
-            triggered_at = datetime.now()
+            triggered_at = now_ist()
+            recent_events = await get_events(limit=10, upstream_url=upstream_url)
+            assessment = self.incident_policy.assess(recent_events)
 
             result = await run_healing_session(
                 upstream_url=upstream_url,
-                context="Sudden failure noticed in the upstream",
+                context={
+                    "trigger": "health_check_failed",
+                    "incident_assessment": {
+                        "classification": assessment.classification,
+                        "recommended_action": assessment.recommended_action,
+                        "operator_guidance": assessment.operator_guidance,
+                        "repeated_failures": assessment.repeated_failures,
+                        "needs_human_review": assessment.needs_human_review,
+                    },
+                    "recent_events": recent_events,
+                },
                 cb_registry=self.cb_registry,
                 health_monitor=self.health_monitor,
             )
@@ -79,7 +128,7 @@ class FailureDetector:
                 session_id=session_id,
                 upstream_url=result["upstream_url"],
                 triggered_at=triggered_at,
-                resolved_at=datetime.now(),
+                resolved_at=now_ist(),
                 status=result.get("status", ""),
                 reason=result.get("reason", ""),
                 suspected_cause=result.get("suspected_cause"),

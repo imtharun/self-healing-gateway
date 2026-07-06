@@ -18,6 +18,7 @@ const compactActionName = (action) => ACTION_LABELS[action] || action.replaceAll
 
 const EVENT_LABELS = {
   health_failed: 'Health failed',
+  health_still_unhealthy: 'Still unhealthy',
   circuit_half_open: 'Trial opened',
   circuit_closed: 'Circuit closed',
   upstream_request_failed: 'Request failed',
@@ -118,6 +119,10 @@ function App() {
   }
 
   const upstreamEntries = Object.entries(gatewayStatus)
+  const knownUpstreams = new Set(upstreamEntries.map(([url]) => url))
+  const visibleGatewayEvents = gatewayEvents.filter(event => (
+    !event.upstream_url || knownUpstreams.has(event.upstream_url)
+  ))
   const summaryItems = [
     ['Healthy', gatewaySummary?.healthy_upstreams ?? 0],
     ['Unhealthy', gatewaySummary?.unhealthy_upstreams ?? 0],
@@ -199,7 +204,7 @@ function App() {
       <section>
         <h2 className="section-title">Recent Timeline</h2>
         <div className="timeline-list">
-          {gatewayEvents.slice(0, 8).map(event => (
+          {visibleGatewayEvents.slice(0, 8).map(event => (
             <div className="timeline-item" key={event.event_id}>
               <div className="timeline-time">{formatDate(event.occurred_at)}</div>
               <div className="timeline-main">
@@ -211,7 +216,7 @@ function App() {
               <div className="timeline-target">{event.upstream_url || '-'}</div>
             </div>
           ))}
-          {!isLoading && gatewayEvents.length === 0 && (
+          {!isLoading && visibleGatewayEvents.length === 0 && (
             <div className="empty-state">No gateway events recorded yet.</div>
           )}
           {isLoading && (

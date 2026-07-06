@@ -2,7 +2,6 @@
 import json
 import os
 import uuid
-from datetime import datetime
 from pathlib import Path
 
 # third-party
@@ -10,6 +9,7 @@ import aiosqlite
 
 # local
 from gateway.audit.models import GatewayEvent, HealingSession
+from gateway.time_utils import now_ist
 
 DB_PATH = Path(
     os.getenv(
@@ -141,21 +141,29 @@ async def record_event(
         event_id=str(uuid.uuid4()),
         event_type=event_type,
         upstream_url=upstream_url,
-        occurred_at=datetime.now(),
+        occurred_at=now_ist(),
         message=message,
         metadata=metadata or {},
     )
     await save_event(event)
 
 
-async def get_events(limit: int = 100) -> list[dict]:
+async def get_events(limit: int = 100, upstream_url: str | None = None) -> list[dict]:
     limit = max(1, min(limit, 300))
+    params: tuple = (limit,)
+    where_clause = ""
+    if upstream_url:
+        where_clause = "WHERE upstream_url = ?"
+        params = (upstream_url, limit)
+
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            """
-            SELECT * FROM gateway_events ORDER BY occurred_at DESC LIMIT ?
+            f"""
+            SELECT * FROM gateway_events
+            {where_clause}
+            ORDER BY occurred_at DESC LIMIT ?
         """,
-            (limit,),
+            params,
         ) as cursor:
             rows = await cursor.fetchall()
             columns = [col[0] for col in cursor.description]
