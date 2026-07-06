@@ -2,6 +2,7 @@
 import time
 
 # local
+from gateway.audit.store import get_events
 from gateway.resilience.circuit_breaker import CircuitStatus
 
 
@@ -49,6 +50,25 @@ def get_upstream_state(upstream_url: str, cb_registry, health_monitor) -> dict:
         "failure_count": cb.failure_count,
         "failure_threshold": cb.failure_threshold,
         "is_healthy": health_monitor.health_status.get(upstream_url),
+    }
+
+
+async def get_recent_events(upstream_url: str, limit: int = 10) -> dict:
+    """
+    Returns recent audit events for incident memory.
+    """
+    events = await get_events(limit=limit, upstream_url=upstream_url)
+    return {
+        "upstream_url": upstream_url,
+        "events": [
+            {
+                "event_type": event["event_type"],
+                "occurred_at": event["occurred_at"],
+                "message": event["message"],
+                "metadata": event["metadata"],
+            }
+            for event in events
+        ],
     }
 
 

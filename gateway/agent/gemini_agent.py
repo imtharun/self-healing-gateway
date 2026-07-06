@@ -13,6 +13,7 @@ from gateway.agent.tool_registry import REMEDIATION_TOOLS
 from gateway.agent.tools import (
     close_circuit,
     drain_upstream,
+    get_recent_events,
     get_upstream_state,
     mark_resolved,
     open_circuit,
@@ -37,7 +38,7 @@ def _validate_upstream(upstream_url: str, cb_registry: dict) -> str:
     return upstream_url
 
 
-def execute_tool(fn_name: str, fn_args: dict, cb_registry, health_monitor) -> dict:
+async def execute_tool(fn_name: str, fn_args: dict, cb_registry, health_monitor) -> dict:
     upstream_url = _validate_upstream(fn_args.get("upstream_url", ""), cb_registry)
 
     if fn_name == "open_circuit":
@@ -50,6 +51,9 @@ def execute_tool(fn_name: str, fn_args: dict, cb_registry, health_monitor) -> di
             cb_registry=cb_registry,
             health_monitor=health_monitor,
         )
+    elif fn_name == "get_recent_events":
+        limit = int(fn_args.get("limit") or 10)
+        return await get_recent_events(upstream_url=upstream_url, limit=limit)
     elif fn_name == "drain_upstream":
         return drain_upstream(upstream_url=upstream_url, cb_registry=cb_registry)
     elif fn_name == "mark_resolved":
@@ -128,7 +132,7 @@ async def run_healing_session(
                 actions_taken.append(fn_name)
 
                 try:
-                    result = execute_tool(
+                    result = await execute_tool(
                         fn_name, fn_args, cb_registry, health_monitor
                     )
                 except ValueError as exc:

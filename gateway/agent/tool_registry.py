@@ -31,6 +31,28 @@ get_upstream_state_decl = types.FunctionDeclaration(
     ),
 )
 
+get_recent_events_decl = types.FunctionDeclaration(
+    name="get_recent_events",
+    description=(
+        "Returns recent gateway events for an upstream so the agent can detect "
+        "first failures, flapping services, or repeated failures before acting."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "upstream_url": types.Schema(
+                type=types.Type.STRING,
+                description="Full upstream URL e.g. http://localhost:9091",
+            ),
+            "limit": types.Schema(
+                type=types.Type.INTEGER,
+                description="Maximum number of recent events to retrieve.",
+            ),
+        },
+        required=["upstream_url"],
+    ),
+)
+
 close_circuit_decl = types.FunctionDeclaration(
     name="close_circuit",
     description="Closes the circuit breaker for an upstream service, allowing traffic to resume",
@@ -114,6 +136,7 @@ mark_resolved_decl = types.FunctionDeclaration(
 REMEDIATION_TOOLS = types.Tool(
     function_declarations=[
         get_upstream_state_decl,
+        get_recent_events_decl,
         open_circuit_decl,
         close_circuit_decl,
         drain_upstream_decl,

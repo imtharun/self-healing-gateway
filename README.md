@@ -6,6 +6,8 @@ A FastAPI-based API gateway that detects unhealthy upstream services, isolates f
 
 - Health-gated circuit breaker recovery: unhealthy upstreams stay blocked until health checks recover.
 - AI-assisted remediation with Gemini tool calls.
+- Agentic incident memory: Gemini inspects recent gateway events before choosing a remediation action.
+- Repeated-failure escalation policy that classifies first failures, flapping services, and repeated failures.
 - Persistent healing-session audit logs.
 - Gateway event timeline for health failures, circuit transitions, trial traffic, and healing completion.
 - Real-time React dashboard for upstream state, events, and operator summaries.
@@ -22,7 +24,7 @@ FastAPI Gateway :8000
   |
   |-- HealthMonitor checks /health
   |-- CircuitBreaker blocks or allows traffic
-  |-- FailureDetector starts Gemini healing sessions
+  |-- FailureDetector classifies incidents and starts Gemini healing sessions
   |-- SQLite audit/event store
   v
 React Dashboard :5173
