@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: self-healing-gateway-api
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./gateway/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: GATEWAY_AUDIT_DB
+        value: /var/data/gateway/audit.db
+      - key: GATEWAY_CORS_ORIGINS
+        value: https://gateway.tharunprasath.com
+      - key: PAYMENTS_UPSTREAM_URL
+        sync: false
+      - key: ORDERS_UPSTREAM_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+    disk:
+      name: gateway-audit
+      mountPath: /var/data/gateway
+      sizeGB: 1
