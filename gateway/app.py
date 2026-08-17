@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 
 # local
-from gateway.audit.store import get_events, get_sessions, init_db
+from gateway.audit.store import close_db, get_events, get_sessions, init_db
 from gateway.failure_detector import FailureDetector
 from gateway.proxy import forward_request
 from gateway.resilience.health_monitor import HealthMonitor
@@ -39,6 +39,7 @@ async def lifespan(app: FastAPI):
         await monitor_task
     with suppress(asyncio.CancelledError):
         await detector_task
+    await close_db()
     print("Shutdown Complete")
 
 

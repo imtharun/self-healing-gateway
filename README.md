@@ -122,10 +122,10 @@ During Blueprint creation, provide these environment variables when prompted:
 
 The mock upstreams are local demo services and are intentionally not published
 by the Render Blueprint. Point the two upstream variables at real deployed
-services. The Blueprint uses Render's free web service. Its SQLite database is
-ephemeral, so audit history resets when Render restarts or redeploys the
-service. Use a paid persistent disk or managed database when persistence is
-required.
+services. The Blueprint uses Render's free web service and stores audit data in
+the existing `relayrun-db` PostgreSQL database under the isolated
+`self_healing_gateway` schema. SQLite remains the local-development fallback
+when `DATABASE_URL` is not set.
 
 ### Dashboard on Vercel
 
@@ -151,6 +151,8 @@ Gateway routes live in `gateway/config.yaml`.
 Useful environment variables:
 
 - `GEMINI_API_KEY`: enables Gemini-assisted healing summaries and tool decisions.
+- `DATABASE_URL`: enables PostgreSQL audit storage when set.
+- `GATEWAY_DB_SCHEMA`: isolates gateway tables within a shared PostgreSQL database.
 - `GATEWAY_AUDIT_DB`: SQLite path for audit/event storage.
 - `GATEWAY_CORS_ORIGINS`: comma-separated dashboard origins.
 - `PAYMENTS_UPSTREAM_URL`: override `/api/payments` upstream.
