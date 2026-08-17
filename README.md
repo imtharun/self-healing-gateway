@@ -111,9 +111,8 @@ npm run dev
 
 The repository includes a production Docker image and a Render Blueprint. In
 Render, create a new Blueprint from this repository. Render reads
-`render.yaml`, creates the `self-healing-gateway-api` web service, attaches a
-persistent disk for the SQLite audit database, and verifies deployments through
-`/health`.
+`render.yaml`, creates the `self-healing-gateway-api` web service, and verifies
+deployments through `/health`.
 
 During Blueprint creation, provide these environment variables when prompted:
 
@@ -123,8 +122,10 @@ During Blueprint creation, provide these environment variables when prompted:
 
 The mock upstreams are local demo services and are intentionally not published
 by the Render Blueprint. Point the two upstream variables at real deployed
-services. The Blueprint uses a paid Starter service because persistent disks
-are not available on Render's free web services.
+services. The Blueprint uses Render's free web service. Its SQLite database is
+ephemeral, so audit history resets when Render restarts or redeploys the
+service. Use a paid persistent disk or managed database when persistence is
+required.
 
 ### Dashboard on Vercel
 
