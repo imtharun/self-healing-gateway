@@ -6,7 +6,6 @@ services:
     dockerfilePath: ./gateway/Dockerfile
     dockerContext: .
     healthCheckPath: /health
-    maxShutdownDelaySeconds: 30
     envVars:
       - key: GATEWAY_AUDIT_DB
         value: /var/data/gateway/audit.db
