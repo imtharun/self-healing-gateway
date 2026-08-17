@@ -1,0 +1,12 @@
+.git
+.gitignore
+.DS_Store
+.pytest_cache
+.venv
+**/__pycache__
+**/*.py[cod]
+**/.env
+**/.DS_Store
+dashboard/node_modules
+dashboard/dist
+gateway/audit/*.db

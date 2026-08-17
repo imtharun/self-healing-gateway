@@ -105,6 +105,44 @@ cp .env.example .env
 npm run dev
 ```
 
+## Production Deployment
+
+### Backend on Render
+
+The repository includes a production Docker image and a Render Blueprint. In
+Render, create a new Blueprint from this repository. Render reads
+`render.yaml`, creates the `self-healing-gateway-api` web service, attaches a
+persistent disk for the SQLite audit database, and verifies deployments through
+`/health`.
+
+During Blueprint creation, provide these environment variables when prompted:
+
+- `PAYMENTS_UPSTREAM_URL`: public or private URL for the payments service.
+- `ORDERS_UPSTREAM_URL`: public or private URL for the orders service.
+- `GEMINI_API_KEY`: Gemini API key used by healing sessions.
+
+The mock upstreams are local demo services and are intentionally not published
+by the Render Blueprint. Point the two upstream variables at real deployed
+services. The Blueprint uses a paid Starter service because persistent disks
+are not available on Render's free web services.
+
+### Dashboard on Vercel
+
+Keep `dashboard` as the Vercel project root. After Render assigns the backend
+URL, set this Vercel production environment variable:
+
+```text
+VITE_API_URL=https://self-healing-gateway-api.onrender.com
+```
+
+Replace the example hostname with the actual Render service URL and redeploy
+the dashboard. The public site opens on the product overview at `/`; operators
+enter the live control plane through `/dashboard`. `dashboard/vercel.json`
+keeps direct visits to that route working.
+
+If the frontend domain changes, update `GATEWAY_CORS_ORIGINS` in `render.yaml`
+or in the Render service settings before deploying.
+
 ## Configuration
 
 Gateway routes live in `gateway/config.yaml`.

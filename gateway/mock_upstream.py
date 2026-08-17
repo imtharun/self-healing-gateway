@@ -14,7 +14,7 @@ state = {
 
 
 def _require_dev_admin_enabled() -> None:
-    if os.getenv("ENABLE_MOCK_ADMIN", "true").lower() != "true":
+    if os.getenv("ENABLE_MOCK_ADMIN", "false").lower() != "true":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Mock admin controls are disabled.",

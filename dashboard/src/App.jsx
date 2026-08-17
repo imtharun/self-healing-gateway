@@ -2,7 +2,9 @@ import React, { useEffect, useState } from 'react'
 import axios from 'axios'
 import './index.css'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
+const API_URL = (
+  import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://127.0.0.1:8000' : '')
+).replace(/\/$/, '')
 const REFRESH_INTERVAL_MS = 5000
 const TIME_ZONE = 'Asia/Kolkata'
 
@@ -25,7 +27,63 @@ const EVENT_LABELS = {
   healing_completed: 'Healing completed'
 }
 
-function App() {
+function LandingPage() {
+  return (
+    <div className="landing-container">
+      <header className="landing-header">
+        <a className="brand-link" href="/" aria-label="Self-Healing API Gateway home">
+          Self-Healing API Gateway
+        </a>
+        <a className="secondary-link" href="/dashboard">
+          Open dashboard
+        </a>
+      </header>
+
+      <main>
+        <section className="hero-section">
+          <div className="hero-kicker">
+            <span className="status-dot healthy"></span>
+            Autonomous resilience control plane
+          </div>
+          <h1 className="hero-title">Keep upstream failures contained.</h1>
+          <p className="hero-copy">
+            Detect unhealthy services, isolate failure with circuit breakers, and
+            coordinate AI-assisted recovery from one operational view.
+          </p>
+          <div className="hero-actions">
+            <a className="primary-link" href="/dashboard">
+              Enter control plane <span aria-hidden="true">→</span>
+            </a>
+            <a className="text-link" href="#capabilities">See how it works</a>
+          </div>
+        </section>
+
+        <section className="capabilities-section" id="capabilities">
+          <h2 className="section-title">Resilience loop</h2>
+          <div className="capability-grid">
+            <article className="capability-card">
+              <span className="capability-index">01</span>
+              <h3>Detect</h3>
+              <p>Continuously check upstream health and classify repeated failures.</p>
+            </article>
+            <article className="capability-card">
+              <span className="capability-index">02</span>
+              <h3>Isolate</h3>
+              <p>Open health-gated circuits before a dependency failure spreads.</p>
+            </article>
+            <article className="capability-card">
+              <span className="capability-index">03</span>
+              <h3>Recover</h3>
+              <p>Run assisted remediation and preserve a complete operator audit trail.</p>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+  )
+}
+
+function DashboardPage() {
   const [gatewayStatus, setGatewayStatus] = useState({})
   const [gatewaySummary, setGatewaySummary] = useState(null)
   const [auditSessions, setAuditSessions] = useState([])
@@ -134,6 +192,7 @@ function App() {
     <div className="dashboard-container">
       <header className="dashboard-header">
         <div>
+          <a className="back-link" href="/">← Overview</a>
           <h1 className="dashboard-title">Self-Healing API Gateway</h1>
           <div className="dashboard-subtitle">Self-healing infrastructure control plane</div>
         </div>
@@ -289,6 +348,13 @@ function App() {
       </section>
     </div>
   )
+}
+
+function App() {
+  const path = window.location.pathname.replace(/\/+$/, '') || '/'
+  return path === '/dashboard'
+    ? <DashboardPage />
+    : <LandingPage />
 }
 
 export default App
