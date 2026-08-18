@@ -9,9 +9,7 @@ services:
     healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: relayrun-db
-          property: connectionString
+        sync: false
       - key: GATEWAY_DB_SCHEMA
         value: self_healing_gateway
       - key: GATEWAY_CORS_ORIGINS

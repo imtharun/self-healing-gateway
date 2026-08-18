@@ -116,6 +116,8 @@ deployments through `/health`.
 
 During Blueprint creation, provide these environment variables when prompted:
 
+- `DATABASE_URL`: Neon pooled PostgreSQL connection string. In Neon, choose
+  the pooled connection string and keep `sslmode=require` enabled.
 - `PAYMENTS_UPSTREAM_URL`: public or private URL for the payments service.
 - `ORDERS_UPSTREAM_URL`: public or private URL for the orders service.
 - `GEMINI_API_KEY`: Gemini API key used by healing sessions.
@@ -123,9 +125,10 @@ During Blueprint creation, provide these environment variables when prompted:
 The mock upstreams are local demo services and are intentionally not published
 by the Render Blueprint. Point the two upstream variables at real deployed
 services. The Blueprint uses Render's free web service and stores audit data in
-the existing `relayrun-db` PostgreSQL database under the isolated
-`self_healing_gateway` schema. SQLite remains the local-development fallback
-when `DATABASE_URL` is not set.
+Neon PostgreSQL under the isolated `self_healing_gateway` schema. Neon can
+scale an inactive database to zero and automatically wake it on the next
+connection. SQLite remains the local-development fallback when `DATABASE_URL`
+is not set.
 
 ### Dashboard on Vercel
 
