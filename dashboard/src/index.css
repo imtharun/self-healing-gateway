@@ -41,6 +41,12 @@ body {
   gap: 1.5rem;
 }
 
+.landing-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
 .brand-link,
 .secondary-link,
 .primary-link,
@@ -242,6 +248,20 @@ body {
   cursor: not-allowed;
 }
 
+.text-button {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 0.5rem 0;
+}
+
+.text-button:hover {
+  color: var(--text-primary);
+}
+
 .alert-banner {
   border: 1px solid rgba(239, 68, 68, 0.35);
   background: rgba(239, 68, 68, 0.08);
@@ -250,6 +270,170 @@ body {
   padding: 0.875rem 1rem;
   font-size: 0.875rem;
   margin-bottom: 2rem;
+}
+
+.demo-notice {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  padding: 0.875rem 1rem;
+  margin-bottom: 2rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.demo-badge,
+.demo-phase {
+  flex: 0 0 auto;
+  border: 1px solid #333333;
+  border-radius: 999px;
+  color: var(--text-primary);
+  padding: 0.125rem 0.5rem;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.demo-phase {
+  margin-left: auto;
+  color: var(--text-secondary);
+}
+
+.phase-detecting,
+.phase-isolating {
+  border-color: rgba(239, 68, 68, 0.45);
+  color: #fca5a5;
+}
+
+.phase-recovering {
+  border-color: rgba(234, 179, 8, 0.45);
+  color: #fde047;
+}
+
+.phase-complete {
+  border-color: rgba(34, 197, 94, 0.45);
+  color: #86efac;
+}
+
+.protected-badge {
+  border-color: rgba(34, 197, 94, 0.45);
+  color: #86efac;
+}
+
+.auth-shell {
+  min-height: calc(100vh - 8rem);
+  display: grid;
+  place-items: center;
+}
+
+.auth-panel {
+  width: min(100%, 28rem);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  padding: 2rem;
+}
+
+.auth-kicker {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-bottom: 1.25rem;
+  color: var(--text-secondary);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.auth-title {
+  color: var(--text-primary);
+  font-size: 1.75rem;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+.auth-copy {
+  margin-top: 0.75rem;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 2rem;
+}
+
+.auth-label {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.auth-input {
+  width: 100%;
+  border: 1px solid #303030;
+  border-radius: 6px;
+  outline: none;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  padding: 0.75rem;
+}
+
+.auth-input:focus {
+  border-color: #555555;
+}
+
+.auth-submit {
+  border: 1px solid var(--text-primary);
+  border-radius: 6px;
+  background: var(--text-primary);
+  color: var(--bg-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin-top: 0.25rem;
+  padding: 0.75rem 1rem;
+}
+
+.auth-submit:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.auth-link-button {
+  display: block;
+  margin-top: 1.5rem;
+  text-align: center;
+  text-decoration: none;
+}
+
+.auth-error {
+  color: #fca5a5;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.auth-footnote {
+  border-top: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  margin-top: 2rem;
+  padding-top: 1rem;
+}
+
+.auth-footnote a {
+  color: var(--text-primary);
 }
 
 .section-title {
@@ -517,6 +701,18 @@ body {
     padding: 7rem 0 5rem;
   }
 
+  .landing-nav-actions {
+    gap: 0.75rem;
+  }
+
+  .auth-shell {
+    min-height: calc(100vh - 4rem);
+  }
+
+  .auth-panel {
+    padding: 1.5rem;
+  }
+
   .hero-title {
     font-size: clamp(2.75rem, 14vw, 4.25rem);
   }
@@ -533,6 +729,15 @@ body {
   .header-actions {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .demo-notice {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .demo-phase {
+    margin-left: 0;
   }
 
   .upstream-item {
