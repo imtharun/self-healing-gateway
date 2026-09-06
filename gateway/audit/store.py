@@ -12,6 +12,7 @@ import asyncpg
 # local
 from gateway.audit.models import GatewayEvent, HealingSession
 from gateway.time_utils import now_ist
+from gateway.upstreams.models import ManagedUpstream
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 DB_SCHEMA = os.getenv("GATEWAY_DB_SCHEMA", "self_healing_gateway")
@@ -75,6 +76,18 @@ async def init_db() -> None:
                 metadata TEXT
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS managed_upstreams (
+                upstream_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                path TEXT NOT NULL UNIQUE,
+                upstream_url TEXT NOT NULL UNIQUE,
+                health_check TEXT NOT NULL,
+                failure_threshold INTEGER NOT NULL,
+                recovery_timeout INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
         await db.commit()
 
 
@@ -83,6 +96,7 @@ async def _init_postgres() -> None:
 
     sessions_table = _postgres_table("healing_sessions")
     events_table = _postgres_table("gateway_events")
+    upstreams_table = _postgres_table("managed_upstreams")
     _pg_pool = await asyncpg.create_pool(
         dsn=DATABASE_URL,
         min_size=1,
@@ -113,6 +127,18 @@ async def _init_postgres() -> None:
                 occurred_at TEXT,
                 message TEXT,
                 metadata TEXT
+            )
+        """)
+        await connection.execute(f"""
+            CREATE TABLE IF NOT EXISTS {upstreams_table} (
+                upstream_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                path TEXT NOT NULL UNIQUE,
+                upstream_url TEXT NOT NULL UNIQUE,
+                health_check TEXT NOT NULL,
+                failure_threshold INTEGER NOT NULL,
+                recovery_timeout INTEGER NOT NULL,
+                created_at TEXT NOT NULL
             )
         """)
         for column_name in (
@@ -308,3 +334,76 @@ async def get_events(limit: int = 100, upstream_url: str | None = None) -> list[
     for result in results:
         result["metadata"] = json.loads(result["metadata"] or "{}")
     return results
+
+
+async def save_upstream(upstream: ManagedUpstream) -> None:
+    values = (
+        upstream.upstream_id,
+        upstream.name,
+        upstream.path,
+        upstream.upstream_url,
+        upstream.health_check,
+        upstream.failure_threshold,
+        upstream.recovery_timeout,
+        upstream.created_at.isoformat(),
+    )
+    if _postgres_enabled():
+        table = _postgres_table("managed_upstreams")
+        await _require_pg_pool().execute(
+            f"""
+                INSERT INTO {table} (
+                    upstream_id, name, path, upstream_url, health_check,
+                    failure_threshold, recovery_timeout, created_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            """,
+            *values,
+        )
+        return
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+                INSERT INTO managed_upstreams (
+                    upstream_id, name, path, upstream_url, health_check,
+                    failure_threshold, recovery_timeout, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            values,
+        )
+        await db.commit()
+
+
+async def get_upstreams() -> list[dict]:
+    if _postgres_enabled():
+        table = _postgres_table("managed_upstreams")
+        rows = await _require_pg_pool().fetch(
+            f"SELECT * FROM {table} ORDER BY created_at ASC"
+        )
+        return [{**dict(row), "managed": True} for row in rows]
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT * FROM managed_upstreams ORDER BY created_at ASC"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            columns = [column[0] for column in cursor.description]
+            return [{**dict(zip(columns, row)), "managed": True} for row in rows]
+
+
+async def delete_upstream(upstream_id: str) -> None:
+    if _postgres_enabled():
+        table = _postgres_table("managed_upstreams")
+        result = await _require_pg_pool().execute(
+            f"DELETE FROM {table} WHERE upstream_id = $1", upstream_id
+        )
+        if result == "DELETE 0":
+            raise KeyError(upstream_id)
+        return
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM managed_upstreams WHERE upstream_id = ?", (upstream_id,)
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            raise KeyError(upstream_id)

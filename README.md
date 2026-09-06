@@ -12,6 +12,7 @@ A FastAPI-based API gateway that detects unhealthy upstream services, isolates f
 - Gateway event timeline for health failures, circuit transitions, trial traffic, and healing completion.
 - Safe public incident simulation for portfolio visitors.
 - Authenticated operator dashboard for live upstream state, events, and audit records.
+- Authenticated runtime upstream registration with persistent configuration and draining removal.
 
 ## Architecture
 
@@ -160,7 +161,10 @@ or in the Render service settings before deploying.
 
 ## Configuration
 
-Gateway routes live in `gateway/config.yaml`.
+Built-in gateway routes live in `gateway/config.yaml`. Operators can register
+additional routes from `/operator`; these are persisted in the same SQLite or
+PostgreSQL database and restored when the gateway restarts. Built-in routes are
+deployment-managed and cannot be removed from the dashboard.
 
 Useful environment variables:
 
@@ -174,6 +178,9 @@ Useful environment variables:
 - `OPERATOR_PASSWORD_HASH`: PBKDF2 hash used for the single operator login.
 - `OPERATOR_SESSION_SECRET`: random secret used to sign eight-hour sessions.
 - `OPERATOR_COOKIE_SECURE`: set to `false` only for local HTTP development.
+- `GATEWAY_ALLOW_PRIVATE_UPSTREAMS`: permits private/loopback upstream URLs when
+  `true`. Use it for the local Docker mock services only; production defaults to
+  `false` to reduce server-side request-forgery risk.
 
 ## Access Control
 
@@ -181,6 +188,10 @@ Useful environment variables:
 and proxied upstream routes require a signed operator session. Non-GET proxy
 requests and logout also require the `X-Operator-CSRF: 1` header. The public
 dashboard uses only seeded browser data and never reads operational records.
+Upstream add/remove endpoints have the same session and CSRF protection. URL
+validation blocks credentials, unresolved hosts, and private/local addresses in
+production. Removal stops new routing immediately and waits for in-flight
+requests to finish before deleting circuit-breaker state.
 
 ## API Examples
 
@@ -197,6 +208,15 @@ Audit and event trail:
 curl http://127.0.0.1:8000/audit/sessions
 curl http://127.0.0.1:8000/audit/events
 ```
+
+Managed upstreams:
+
+```sh
+curl http://127.0.0.1:8000/operator/upstreams
+```
+
+Use the operator dashboard to add and remove managed upstreams. The browser
+sends the signed session cookie and CSRF header required for mutations.
 
 Mock upstream controls:
 

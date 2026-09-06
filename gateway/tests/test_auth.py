@@ -10,6 +10,7 @@ from gateway.auth import (
     verify_password,
     verify_session_token,
 )
+from gateway.upstreams.manager import UpstreamManager
 
 
 def test_password_hash_verification():
@@ -83,3 +84,64 @@ async def test_gateway_proxy_requires_operator_session(monkeypatch):
         response = await client.get("/api/payments")
 
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_upstream_management_requires_session_and_csrf(monkeypatch):
+    monkeypatch.setenv("OPERATOR_SESSION_SECRET", "s" * 48)
+    monkeypatch.setenv("OPERATOR_PASSWORD_HASH", hash_password("demo-password"))
+    monkeypatch.setenv("OPERATOR_COOKIE_SECURE", "false")
+
+    async def no_op(*_args, **_kwargs):
+        return None
+
+    async def normalize_url(value):
+        return value.rstrip("/")
+
+    manager = UpstreamManager([], [])
+    app.state.upstream_manager = manager
+    app.state.cb_registry = manager.cb_registry
+    app.state.health_monitor = type(
+        "TestHealthMonitor", (), {"routes": [], "health_status": {}}
+    )()
+    manager.attach_monitor(app.state.health_monitor)
+    monkeypatch.setattr("gateway.upstreams.manager.save_upstream", no_op)
+    monkeypatch.setattr("gateway.upstreams.manager.delete_upstream", no_op)
+    monkeypatch.setattr("gateway.upstreams.manager.record_event", no_op)
+    monkeypatch.setattr("gateway.app.validate_upstream_url", normalize_url)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        unauthorized = await client.get("/operator/upstreams")
+        assert unauthorized.status_code == 401
+
+        await client.post("/auth/login", json={"password": "demo-password"})
+        payload = {
+            "name": "inventory",
+            "path": "/api/inventory",
+            "upstream_url": "https://inventory.example.com",
+            "health_check": "/health",
+            "failure_threshold": 3,
+            "recovery_timeout": 30,
+        }
+        missing_csrf = await client.post("/operator/upstreams", json=payload)
+        assert missing_csrf.status_code == 403
+
+        created = await client.post(
+            "/operator/upstreams",
+            json=payload,
+            headers={"X-Operator-CSRF": "1"},
+        )
+        assert created.status_code == 201
+        upstream_id = created.json()["upstream_id"]
+
+        listed = await client.get("/operator/upstreams")
+        assert listed.status_code == 200
+        assert listed.json()[0]["path"] == "/api/inventory"
+
+        removed = await client.delete(
+            f"/operator/upstreams/{upstream_id}",
+            headers={"X-Operator-CSRF": "1"},
+        )
+        assert removed.status_code == 200
+        assert removed.json()["removed"] is True

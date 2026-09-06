@@ -6,6 +6,7 @@ import pytest
 
 from gateway.audit import store
 from gateway.audit.models import HealingSession
+from gateway.upstreams.models import ManagedUpstream
 
 
 @pytest.mark.asyncio
@@ -62,3 +63,28 @@ async def test_record_and_get_events_round_trip(tmp_path, monkeypatch):
     assert events[0]["event_type"] == "circuit_closed"
     assert events[0]["upstream_url"] == "http://localhost:9001"
     assert events[0]["metadata"] == {"status_code": 200}
+
+
+@pytest.mark.asyncio
+async def test_managed_upstream_round_trip(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "audit.db")
+    await store.init_db()
+    upstream = ManagedUpstream(
+        upstream_id="upstream-1",
+        name="inventory",
+        path="/api/inventory",
+        upstream_url="https://inventory.example.com",
+        health_check="/health",
+        failure_threshold=4,
+        recovery_timeout=45,
+    )
+
+    await store.save_upstream(upstream)
+    upstreams = await store.get_upstreams()
+
+    assert upstreams[0]["upstream_id"] == "upstream-1"
+    assert upstreams[0]["path"] == "/api/inventory"
+    assert upstreams[0]["managed"] is True
+
+    await store.delete_upstream("upstream-1")
+    assert await store.get_upstreams() == []

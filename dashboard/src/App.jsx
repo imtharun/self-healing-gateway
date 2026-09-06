@@ -45,7 +45,18 @@ const EVENT_LABELS = {
   circuit_half_open: 'Trial opened',
   circuit_closed: 'Circuit closed',
   upstream_request_failed: 'Request failed',
-  healing_completed: 'Healing completed'
+  healing_completed: 'Healing completed',
+  upstream_added: 'Upstream added',
+  upstream_removed: 'Upstream removed'
+}
+
+const EMPTY_UPSTREAM_FORM = {
+  name: '',
+  path: '/api/',
+  upstream_url: '',
+  health_check: '/health',
+  failure_threshold: 5,
+  recovery_timeout: 30
 }
 
 const dateBefore = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString()
@@ -163,7 +174,8 @@ function DashboardPage({ operatorMode = false }) {
     gatewayStatus: {},
     gatewaySummary: null,
     gatewayEvents: [],
-    auditSessions: []
+    auditSessions: [],
+    upstreams: []
   })
   const [demoPhase, setDemoPhase] = useState('ready')
   const [lastUpdated, setLastUpdated] = useState(() => operatorMode ? null : new Date())
@@ -172,6 +184,12 @@ function DashboardPage({ operatorMode = false }) {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
   const [operatorAuthenticated, setOperatorAuthenticated] = useState(!operatorMode)
+  const [showUpstreamForm, setShowUpstreamForm] = useState(false)
+  const [upstreamForm, setUpstreamForm] = useState(EMPTY_UPSTREAM_FORM)
+  const [upstreamActionError, setUpstreamActionError] = useState('')
+  const [isSavingUpstream, setIsSavingUpstream] = useState(false)
+  const [pendingRemovalId, setPendingRemovalId] = useState(null)
+  const [removingUpstreamId, setRemovingUpstreamId] = useState(null)
   const timersRef = useRef([])
 
   useEffect(() => {
@@ -187,13 +205,14 @@ function DashboardPage({ operatorMode = false }) {
     try {
       await apiRequest('/auth/session', { signal })
       setOperatorAuthenticated(true)
-      const [gatewayStatus, gatewaySummary, auditSessions, gatewayEvents] = await Promise.all([
+      const [gatewayStatus, gatewaySummary, auditSessions, gatewayEvents, upstreams] = await Promise.all([
         apiRequest('/gateway/health-status', { signal }),
         apiRequest('/gateway/summary', { signal }),
         apiRequest('/audit/sessions', { signal }),
-        apiRequest('/audit/events', { signal })
+        apiRequest('/audit/events', { signal }),
+        apiRequest('/operator/upstreams', { signal })
       ])
-      setOperatorData({ gatewayStatus, gatewaySummary, auditSessions, gatewayEvents })
+      setOperatorData({ gatewayStatus, gatewaySummary, auditSessions, gatewayEvents, upstreams })
       setErrorMessage('')
       setLastUpdated(new Date())
     } catch (error) {
@@ -224,6 +243,51 @@ function DashboardPage({ operatorMode = false }) {
       })
     } finally {
       window.location.replace('/operator/login')
+    }
+  }
+
+  const updateUpstreamField = (event) => {
+    const { name, value, type } = event.target
+    setUpstreamForm(current => ({
+      ...current,
+      [name]: type === 'number' ? Number(value) : value
+    }))
+  }
+
+  const addUpstream = async (event) => {
+    event.preventDefault()
+    setIsSavingUpstream(true)
+    setUpstreamActionError('')
+    try {
+      await apiRequest('/operator/upstreams', {
+        method: 'POST',
+        headers: { 'X-Operator-CSRF': '1' },
+        body: JSON.stringify(upstreamForm)
+      })
+      setUpstreamForm(EMPTY_UPSTREAM_FORM)
+      setShowUpstreamForm(false)
+      await fetchOperatorData()
+    } catch (error) {
+      setUpstreamActionError(error.message || 'Unable to add the upstream.')
+    } finally {
+      setIsSavingUpstream(false)
+    }
+  }
+
+  const removeUpstream = async (upstreamId) => {
+    setRemovingUpstreamId(upstreamId)
+    setUpstreamActionError('')
+    try {
+      await apiRequest(`/operator/upstreams/${encodeURIComponent(upstreamId)}`, {
+        method: 'DELETE',
+        headers: { 'X-Operator-CSRF': '1' }
+      })
+      setPendingRemovalId(null)
+      await fetchOperatorData()
+    } catch (error) {
+      setUpstreamActionError(error.message || 'Unable to remove the upstream.')
+    } finally {
+      setRemovingUpstreamId(null)
     }
   }
 
@@ -384,10 +448,13 @@ function DashboardPage({ operatorMode = false }) {
   const activeData = operatorMode ? operatorData : demoData
   const { gatewayStatus, auditSessions, gatewayEvents } = activeData
   const upstreamEntries = Object.entries(gatewayStatus)
+  const upstreamMetadata = new Map(
+    (operatorMode ? operatorData.upstreams : []).map(upstream => [upstream.upstream_url, upstream])
+  )
   const knownUpstreams = new Set(upstreamEntries.map(([url]) => url))
-  const visibleGatewayEvents = gatewayEvents.filter(event => (
-    !event.upstream_url || knownUpstreams.has(event.upstream_url)
-  ))
+  const visibleGatewayEvents = operatorMode
+    ? gatewayEvents
+    : gatewayEvents.filter(event => !event.upstream_url || knownUpstreams.has(event.upstream_url))
   const summaryItems = [
     ['Healthy', operatorMode
       ? (operatorData.gatewaySummary?.healthy_upstreams ?? 0)
@@ -499,11 +566,82 @@ function DashboardPage({ operatorMode = false }) {
       </section>
 
       <section>
-        <h2 className="section-title">Upstreams</h2>
+        <div className="section-heading">
+          <h2 className="section-title">Upstreams</h2>
+          {operatorMode && (
+            <button
+              className="section-action"
+              type="button"
+              onClick={() => {
+                setShowUpstreamForm(current => !current)
+                setUpstreamActionError('')
+              }}
+            >
+              {showUpstreamForm ? 'Cancel' : 'Add upstream'}
+            </button>
+          )}
+        </div>
+
+        {operatorMode && showUpstreamForm && (
+          <form className="upstream-form" onSubmit={addUpstream}>
+            <div className="upstream-form-intro">
+              <div>
+                <h3>Register upstream</h3>
+                <p>The route becomes live immediately and remains configured after a restart.</p>
+              </div>
+              <span className="demo-badge protected-badge">Protected action</span>
+            </div>
+            <div className="upstream-form-grid">
+              <label className="field-group">
+                <span>Name</span>
+                <input name="name" value={upstreamForm.name} onChange={updateUpstreamField} placeholder="inventory" required />
+              </label>
+              <label className="field-group">
+                <span>Gateway path</span>
+                <input name="path" value={upstreamForm.path} onChange={updateUpstreamField} placeholder="/api/inventory" required />
+              </label>
+              <label className="field-group field-wide">
+                <span>Upstream URL</span>
+                <input name="upstream_url" type="url" value={upstreamForm.upstream_url} onChange={updateUpstreamField} placeholder="https://inventory.example.com" required />
+              </label>
+              <label className="field-group">
+                <span>Health path</span>
+                <input name="health_check" value={upstreamForm.health_check} onChange={updateUpstreamField} required />
+              </label>
+              <label className="field-group">
+                <span>Failure threshold</span>
+                <input name="failure_threshold" type="number" min="1" max="20" value={upstreamForm.failure_threshold} onChange={updateUpstreamField} required />
+              </label>
+              <label className="field-group">
+                <span>Recovery timeout (seconds)</span>
+                <input name="recovery_timeout" type="number" min="5" max="3600" value={upstreamForm.recovery_timeout} onChange={updateUpstreamField} required />
+              </label>
+            </div>
+            {upstreamActionError && <div className="auth-error" role="alert">{upstreamActionError}</div>}
+            <div className="form-actions">
+              <button className="auth-submit compact-submit" type="submit" disabled={isSavingUpstream}>
+                {isSavingUpstream ? 'Registering…' : 'Register upstream'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {operatorMode && upstreamActionError && !showUpstreamForm && (
+          <div className="inline-error" role="alert">{upstreamActionError}</div>
+        )}
         <div className="upstreams-list">
-          {upstreamEntries.map(([url, data]) => (
-            <div className="upstream-item" key={url}>
-              <div className="upstream-url">{url}</div>
+          {upstreamEntries.map(([url, data]) => {
+            const metadata = upstreamMetadata.get(url)
+            return (
+            <div className={`upstream-item ${operatorMode ? 'operator-upstream-item' : ''}`} key={url}>
+              <div className="upstream-identity">
+                <div className="upstream-url">{url}</div>
+                {metadata && (
+                  <div className="upstream-route">
+                    {metadata.path} · {metadata.managed ? 'Operator managed' : 'Deployment config'}
+                  </div>
+                )}
+              </div>
 
               <div className="status-label">
                 <div className={`status-dot ${data.is_healthy ? 'healthy' : 'unhealthy'}`}></div>
@@ -521,8 +659,31 @@ function DashboardPage({ operatorMode = false }) {
                 <span className="metric-label">Failures</span>
                 <span className="metric-value">{data.failure_count}</span>
               </div>
+
+              {operatorMode && metadata?.managed && (
+                <div className="upstream-actions">
+                  {pendingRemovalId === metadata.upstream_id ? (
+                    <>
+                      <span>Remove?</span>
+                      <button
+                        className="danger-button"
+                        type="button"
+                        disabled={removingUpstreamId === metadata.upstream_id}
+                        onClick={() => removeUpstream(metadata.upstream_id)}
+                      >
+                        {removingUpstreamId === metadata.upstream_id ? 'Draining…' : 'Confirm'}
+                      </button>
+                      <button className="text-button" type="button" onClick={() => setPendingRemovalId(null)}>Cancel</button>
+                    </>
+                  ) : (
+                    <button className="remove-button" type="button" onClick={() => setPendingRemovalId(metadata.upstream_id)}>
+                      Remove
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
-          ))}
+          )})}
           {upstreamEntries.length === 0 && (
             <div className="empty-state">
               {isLoading ? 'Loading upstream status…' : 'No upstreams reported by the gateway.'}

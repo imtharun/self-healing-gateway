@@ -24,3 +24,5 @@ services:
         sync: false
       - key: OPERATOR_SESSION_SECRET
         generateValue: true
+      - key: GATEWAY_ALLOW_PRIVATE_UPSTREAMS
+        value: "false"

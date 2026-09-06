@@ -22,12 +22,24 @@ from gateway.auth import (
     require_operator,
     verify_password,
 )
-from gateway.audit.store import close_db, get_events, get_sessions, init_db
+from gateway.audit.store import (
+    close_db,
+    get_events,
+    get_sessions,
+    get_upstreams,
+    init_db,
+)
 from gateway.failure_detector import FailureDetector
 from gateway.proxy import forward_request
 from gateway.resilience.health_monitor import HealthMonitor
-from gateway.resilience.registry import build_registry
-from gateway.router import get_upstream, load_config
+from gateway.router import load_config
+from gateway.upstreams.manager import (
+    UpstreamConflictError,
+    UpstreamManager,
+    UpstreamNotFoundError,
+)
+from gateway.upstreams.models import ManagedUpstream, UpstreamCreate
+from gateway.upstreams.validation import validate_upstream_url
 
 
 @asynccontextmanager
@@ -36,8 +48,13 @@ async def lifespan(app: FastAPI):
     print("Startup Complete")
 
     config = load_config()
-    app.state.cb_registry = build_registry(config)
-    monitor = HealthMonitor(routes=config["routes"])
+    manager = UpstreamManager(
+        static_routes=config["routes"], managed_routes=await get_upstreams()
+    )
+    app.state.upstream_manager = manager
+    app.state.cb_registry = manager.cb_registry
+    monitor = HealthMonitor(routes=manager.routes)
+    manager.attach_monitor(monitor)
     monitor_task = asyncio.create_task(monitor.start())
     app.state.health_monitor = monitor
     detector = FailureDetector(
@@ -151,7 +168,9 @@ async def health_status(_operator: dict = Depends(require_operator)):
     cb_registry = app.state.cb_registry
 
     status_report = {}
-    for upstream_url, is_healthy in health_data.items():
+    for route in app.state.upstream_manager.list_upstreams():
+        upstream_url = route["upstream_url"]
+        is_healthy = health_data.get(upstream_url, False)
         cb = cb_registry.get(upstream_url)
         status_report[upstream_url] = {
             "is_healthy": is_healthy,
@@ -178,6 +197,62 @@ async def gateway_summary(_operator: dict = Depends(require_operator)):
     }
 
 
+@app.get("/operator/upstreams")
+async def operator_upstreams(_operator: dict = Depends(require_operator)):
+    manager = app.state.upstream_manager
+    health_data = app.state.health_monitor.health_status
+    return [
+        {
+            **route,
+            "is_healthy": health_data.get(route["upstream_url"], False),
+            "active_requests": manager.active_request_count(route["upstream_id"]),
+        }
+        for route in manager.list_upstreams()
+    ]
+
+
+@app.post(
+    "/operator/upstreams",
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_operator_upstream(
+    payload: UpstreamCreate,
+    request: Request,
+    _operator: dict = Depends(require_operator),
+):
+    require_csrf_header(request)
+    try:
+        upstream_url = await validate_upstream_url(payload.upstream_url)
+        upstream = ManagedUpstream(
+            **{**payload.model_dump(), "upstream_url": upstream_url}
+        )
+        return await app.state.upstream_manager.add(upstream)
+    except UpstreamConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+
+@app.delete("/operator/upstreams/{upstream_id}")
+async def remove_operator_upstream(
+    upstream_id: str,
+    request: Request,
+    _operator: dict = Depends(require_operator),
+):
+    require_csrf_header(request)
+    try:
+        removed = await app.state.upstream_manager.remove(upstream_id)
+    except UpstreamNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    return {"removed": True, "upstream": removed}
+
+
 @app.get("/audit/sessions")
 async def audit_sessions(_operator: dict = Depends(require_operator)):
     return await get_sessions()
@@ -194,15 +269,14 @@ async def catch_all(request: Request):
     if request.method != "GET":
         require_csrf_header(request)
     path = request.url.path
-    upstream_url = get_upstream(request_path=path)
-    if upstream_url is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No upstream found for {path}",
+    async with app.state.upstream_manager.resolve(path) as route:
+        if route is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No upstream found for {path}",
+            )
+        return await forward_request(
+            request=request,
+            upstream_url=route["upstream_url"],
+            cb_registry=app.state.cb_registry,
         )
-    res = await forward_request(
-        request=request,
-        upstream_url=upstream_url,
-        cb_registry=app.state.cb_registry,
-    )
-    return res
