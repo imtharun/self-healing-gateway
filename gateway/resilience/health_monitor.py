@@ -15,12 +15,23 @@ class HealthMonitor:
         """
         Check health of all upstreams once.
         """
+        routes = list(self.routes)
         async with httpx.AsyncClient(timeout=5.0) as client:
             results = await asyncio.gather(
-                *[self._check_route(client, route) for route in self.routes]
+                *[self._check_route(client, route) for route in routes]
             )
 
-        self.health_status.update(results)
+        active_urls = {route["upstream_url"] for route in self.routes}
+        self.health_status = {
+            upstream_url: is_healthy
+            for upstream_url, is_healthy in self.health_status.items()
+            if upstream_url in active_urls
+        }
+        self.health_status.update(
+            (upstream_url, is_healthy)
+            for upstream_url, is_healthy in results
+            if upstream_url in active_urls
+        )
 
     async def _check_route(self, client: httpx.AsyncClient, route: dict) -> tuple[str, bool]:
         upstream_url = route["upstream_url"]

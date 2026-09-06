@@ -13,6 +13,10 @@ services:
       ORDERS_UPSTREAM_URL: http://orders:9002
       GATEWAY_AUDIT_DB: /app/gateway/audit/audit.db
       GATEWAY_CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      OPERATOR_PASSWORD_HASH: ${OPERATOR_PASSWORD_HASH:-}
+      OPERATOR_SESSION_SECRET: ${OPERATOR_SESSION_SECRET:-}
+      OPERATOR_COOKIE_SECURE: "false"
+      GATEWAY_ALLOW_PRIVATE_UPSTREAMS: "true"
     ports:
       - "8000:8000"
     depends_on:

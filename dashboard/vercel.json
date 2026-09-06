@@ -1,7 +1,19 @@
 {
   "rewrites": [
     {
+      "source": "/backend/:path*",
+      "destination": "https://self-healing-gateway-api.onrender.com/:path*"
+    },
+    {
       "source": "/dashboard",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/operator",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/operator/login",
       "destination": "/index.html"
     }
   ],

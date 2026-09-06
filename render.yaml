@@ -2,13 +2,16 @@ services:
   - type: web
     name: self-healing-gateway-api
     runtime: docker
-    plan: starter
+    plan: free
+    region: singapore
     dockerfilePath: ./gateway/Dockerfile
     dockerContext: .
     healthCheckPath: /health
     envVars:
-      - key: GATEWAY_AUDIT_DB
-        value: /var/data/gateway/audit.db
+      - key: DATABASE_URL
+        sync: false
+      - key: GATEWAY_DB_SCHEMA
+        value: self_healing_gateway
       - key: GATEWAY_CORS_ORIGINS
         value: https://gateway.tharunprasath.com
       - key: PAYMENTS_UPSTREAM_URL
@@ -17,7 +20,9 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
-    disk:
-      name: gateway-audit
-      mountPath: /var/data/gateway
-      sizeGB: 1
+      - key: OPERATOR_PASSWORD_HASH
+        sync: false
+      - key: OPERATOR_SESSION_SECRET
+        generateValue: true
+      - key: GATEWAY_ALLOW_PRIVATE_UPSTREAMS
+        value: "false"

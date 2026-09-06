@@ -1,6 +1,6 @@
 # Self-Healing API Gateway
 
-A FastAPI-based API gateway that detects unhealthy upstream services, isolates failures with health-gated circuit breakers, runs Gemini-assisted remediation, records an audit/event trail, and exposes a real-time React operations dashboard.
+A FastAPI-based API gateway that detects unhealthy upstream services, isolates failures with health-gated circuit breakers, runs Gemini-assisted remediation, records an audit/event trail, and exposes public demo and authenticated operator views.
 
 ## What It Demonstrates
 
@@ -10,7 +10,9 @@ A FastAPI-based API gateway that detects unhealthy upstream services, isolates f
 - Repeated-failure escalation policy that classifies first failures, flapping services, and repeated failures.
 - Persistent healing-session audit logs.
 - Gateway event timeline for health failures, circuit transitions, trial traffic, and healing completion.
-- Real-time React dashboard for upstream state, events, and operator summaries.
+- Safe public incident simulation for portfolio visitors.
+- Authenticated operator dashboard for live upstream state, events, and audit records.
+- Authenticated runtime upstream registration with persistent configuration and draining removal.
 
 ## Architecture
 
@@ -38,10 +40,10 @@ Start the gateway, dashboard, and two mock upstream services:
 docker compose -f gateway/docker-compose.yml up
 ```
 
-Open the dashboard:
+Open the public demo:
 
 ```text
-http://127.0.0.1:5173
+http://127.0.0.1:5173/dashboard
 ```
 
 ## Screenshots
@@ -79,6 +81,16 @@ The successful request closes the half-open circuit.
 
 ## Local Development
 
+Create local operator credentials. Keep these values out of Git:
+
+```sh
+python3 -m gateway.auth
+python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
+```
+
+Copy the generated password hash and session secret into `gateway/.env` as
+`OPERATOR_PASSWORD_HASH` and `OPERATOR_SESSION_SECRET`.
+
 Backend:
 
 ```sh
@@ -111,49 +123,75 @@ npm run dev
 
 The repository includes a production Docker image and a Render Blueprint. In
 Render, create a new Blueprint from this repository. Render reads
-`render.yaml`, creates the `self-healing-gateway-api` web service, attaches a
-persistent disk for the SQLite audit database, and verifies deployments through
-`/health`.
+`render.yaml`, creates the `self-healing-gateway-api` web service, and verifies
+deployments through `/health`.
 
 During Blueprint creation, provide these environment variables when prompted:
 
+- `DATABASE_URL`: Neon pooled PostgreSQL connection string. In Neon, choose
+  the pooled connection string and keep `sslmode=require` enabled.
 - `PAYMENTS_UPSTREAM_URL`: public or private URL for the payments service.
 - `ORDERS_UPSTREAM_URL`: public or private URL for the orders service.
 - `GEMINI_API_KEY`: Gemini API key used by healing sessions.
+- `OPERATOR_PASSWORD_HASH`: generated with `python3 -m gateway.auth`.
 
-The mock upstreams are local demo services and are intentionally not published
+The mock upstreams are local development services and are intentionally not published
 by the Render Blueprint. Point the two upstream variables at real deployed
-services. The Blueprint uses a paid Starter service because persistent disks
-are not available on Render's free web services.
+services. The Blueprint uses Render's free web service and stores audit data in
+Neon PostgreSQL under the isolated `self_healing_gateway` schema. Neon can
+scale an inactive database to zero and automatically wake it on the next
+connection. SQLite remains the local-development fallback when `DATABASE_URL`
+is not set.
 
 ### Dashboard on Vercel
 
-Keep `dashboard` as the Vercel project root. After Render assigns the backend
-URL, set this Vercel production environment variable:
+Keep `dashboard` as the Vercel project root. The public site opens on the
+product overview at `/`, provides a safe seeded scenario at `/dashboard`, and
+sends authenticated operators through `/operator/login` to `/operator`.
+`dashboard/vercel.json` proxies `/backend/*` to Render so the secure operator
+cookie remains first-party and keeps direct visits to all frontend routes
+working.
 
-```text
-VITE_API_URL=https://self-healing-gateway-api.onrender.com
-```
-
-Replace the example hostname with the actual Render service URL and redeploy
-the dashboard. The public site opens on the product overview at `/`; operators
-enter the live control plane through `/dashboard`. `dashboard/vercel.json`
-keeps direct visits to that route working.
+Set `OPERATOR_PASSWORD_HASH` in Render using the generated value. Render
+generates `OPERATOR_SESSION_SECRET` from the Blueprint. Do not expose either
+value through Vercel or a `VITE_*` variable.
 
 If the frontend domain changes, update `GATEWAY_CORS_ORIGINS` in `render.yaml`
 or in the Render service settings before deploying.
 
 ## Configuration
 
-Gateway routes live in `gateway/config.yaml`.
+Built-in gateway routes live in `gateway/config.yaml`. Operators can register
+additional routes from `/operator`; these are persisted in the same SQLite or
+PostgreSQL database and restored when the gateway restarts. Built-in routes are
+deployment-managed and cannot be removed from the dashboard.
 
 Useful environment variables:
 
 - `GEMINI_API_KEY`: enables Gemini-assisted healing summaries and tool decisions.
+- `DATABASE_URL`: enables PostgreSQL audit storage when set.
+- `GATEWAY_DB_SCHEMA`: isolates gateway tables within a shared PostgreSQL database.
 - `GATEWAY_AUDIT_DB`: SQLite path for audit/event storage.
 - `GATEWAY_CORS_ORIGINS`: comma-separated dashboard origins.
 - `PAYMENTS_UPSTREAM_URL`: override `/api/payments` upstream.
 - `ORDERS_UPSTREAM_URL`: override `/api/orders` upstream.
+- `OPERATOR_PASSWORD_HASH`: PBKDF2 hash used for the single operator login.
+- `OPERATOR_SESSION_SECRET`: random secret used to sign eight-hour sessions.
+- `OPERATOR_COOKIE_SECURE`: set to `false` only for local HTTP development.
+- `GATEWAY_ALLOW_PRIVATE_UPSTREAMS`: permits private/loopback upstream URLs when
+  `true`. Use it for the local Docker mock services only; production defaults to
+  `false` to reduce server-side request-forgery risk.
+
+## Access Control
+
+`/health` remains public for Render health checks. Gateway status, audit data,
+and proxied upstream routes require a signed operator session. Non-GET proxy
+requests and logout also require the `X-Operator-CSRF: 1` header. The public
+dashboard uses only seeded browser data and never reads operational records.
+Upstream add/remove endpoints have the same session and CSRF protection. URL
+validation blocks credentials, unresolved hosts, and private/local addresses in
+production. Removal stops new routing immediately and waits for in-flight
+requests to finish before deleting circuit-breaker state.
 
 ## API Examples
 
@@ -170,6 +208,15 @@ Audit and event trail:
 curl http://127.0.0.1:8000/audit/sessions
 curl http://127.0.0.1:8000/audit/events
 ```
+
+Managed upstreams:
+
+```sh
+curl http://127.0.0.1:8000/operator/upstreams
+```
+
+Use the operator dashboard to add and remove managed upstreams. The browser
+sends the signed session cookie and CSRF header required for mutations.
 
 Mock upstream controls:
 

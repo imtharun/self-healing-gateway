@@ -21,10 +21,17 @@ def load_config():
     return configs
 
 
+def route_matches(route_path: str, request_path: str) -> bool:
+    route_path = route_path.rstrip("/")
+    return request_path == route_path or request_path.startswith(f"{route_path}/")
+
+
 def get_upstream(request_path: str) -> str | None:
     config = load_config()
-    for route in config["routes"]:
-        if request_path.startswith(route["path"]):
+    for route in sorted(
+        config["routes"], key=lambda value: len(value["path"]), reverse=True
+    ):
+        if route_matches(route["path"], request_path):
             return route["upstream_url"]
 
     return None
