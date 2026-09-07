@@ -109,6 +109,7 @@ const EMPTY_UPSTREAM_FORM = {
 const dateBefore = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString()
 
 const createSeededDemoData = () => ({
+  approvals: [],
   gatewayStatus: {
     [PAYMENTS_UPSTREAM]: {
       is_healthy: true,
@@ -151,7 +152,7 @@ const createSeededDemoData = () => ({
       upstream_url: ORDERS_UPSTREAM,
       status: 'resolved',
       reason: 'Repeated health-check failures were isolated before recovery was verified.',
-      actions_taken: ['get_upstream_state', 'open_circuit', 'drain_upstream', 'close_circuit', 'mark_resolved']
+      actions_taken: ['get_upstream_state', 'open_circuit', 'mark_resolved']
     }
   ]
 })
@@ -500,7 +501,7 @@ function DashboardPage({ operatorMode = false }) {
 
     addTimer(() => {
       const resolvedAt = new Date().toISOString()
-      setDemoPhase('complete')
+      setDemoPhase('awaiting approval')
       setLastUpdated(new Date())
       setDemoData(current => addEvent({
         ...current,
@@ -508,26 +509,63 @@ function DashboardPage({ operatorMode = false }) {
           ...current.gatewayStatus,
           [ORDERS_UPSTREAM]: {
             is_healthy: true,
-            circuit_state: 'CLOSED',
+            circuit_state: 'HALF_OPEN',
             failure_count: 0
           }
         },
+        approvals: [{
+          approval_id: incidentId,
+          action: 'close_circuit',
+          upstream_url: ORDERS_UPSTREAM,
+          requested_at: resolvedAt,
+          status: 'pending',
+          reason: 'Simulated agent requests restoring full traffic after recovery probes pass. Approve or reject below.'
+        }],
         auditSessions: [{
           session_id: incidentId,
           triggered_at: startedAt,
           upstream_url: ORDERS_UPSTREAM,
           status: 'resolved',
-          reason: 'The demo policy isolated repeated failures, tested recovery, and restored traffic.',
-          actions_taken: ['get_upstream_state', 'open_circuit', 'drain_upstream', 'close_circuit', 'mark_resolved']
+          reason: 'Failures isolated and recovery probes passed. Full traffic restoration awaits operator approval.',
+          actions_taken: ['get_upstream_state', 'get_recent_events', 'open_circuit', 'requested_close_circuit', 'mark_resolved']
         }, ...current.auditSessions]
       }, {
         event_id: `${incidentId}-resolved`,
-        event_type: 'healing_completed',
+        event_type: 'approval_requested',
         occurred_at: resolvedAt,
-        message: 'Recovery verified; circuit closed and normal traffic restored.',
+        message: 'Agent investigation completed; closing the circuit requires your approval.',
         upstream_url: ORDERS_UPSTREAM
       }))
     }, 4600)
+  }
+
+  const decideDemoApproval = (approvalId, decision) => {
+    const approved = decision === 'approve'
+    setDemoPhase(approved ? 'complete' : 'rejected')
+    setLastUpdated(new Date())
+    setDemoData(current => {
+      if (!current.approvals.some(item => item.approval_id === approvalId && item.status === 'pending')) return current
+      return addEvent({
+        ...current,
+        approvals: current.approvals.map(item => item.approval_id === approvalId
+          ? { ...item, status: approved ? 'executed' : 'rejected' } : item),
+        gatewayStatus: {
+          ...current.gatewayStatus,
+          [ORDERS_UPSTREAM]: {
+            ...current.gatewayStatus[ORDERS_UPSTREAM],
+            circuit_state: approved ? 'CLOSED' : current.gatewayStatus[ORDERS_UPSTREAM].circuit_state
+          }
+        }
+      }, {
+        event_id: `${approvalId}-${decision}`,
+        event_type: approved ? 'approval_executed' : 'approval_rejected',
+        occurred_at: new Date().toISOString(),
+        upstream_url: ORDERS_UPSTREAM,
+        message: approved
+          ? 'Simulated operator approved closing the circuit; normal traffic restored.'
+          : 'Simulated operator rejected forced closure; circuit remains half-open for trial traffic.'
+      })
+    })
   }
 
   const formatDate = (dateString) => {
@@ -594,12 +632,14 @@ function DashboardPage({ operatorMode = false }) {
       ? (operatorData.gatewaySummary?.half_open_circuits ?? 0)
       : upstreamEntries.filter(([, data]) => data.circuit_state === 'HALF_OPEN').length]
   ]
-  const isDemoRunning = ['detecting', 'isolating', 'recovering'].includes(demoPhase)
+  const isDemoRunning = ['detecting', 'isolating', 'recovering', 'awaiting approval'].includes(demoPhase)
   const demoButtonLabel = {
     ready: 'Run incident demo',
     detecting: 'Detecting failure…',
     isolating: 'Isolating service…',
     recovering: 'Verifying recovery…',
+    'awaiting approval': 'Awaiting your decision…',
+    rejected: 'Run demo again',
     complete: 'Run demo again'
   }[demoPhase]
 
@@ -669,7 +709,7 @@ function DashboardPage({ operatorMode = false }) {
         <div className="demo-notice" role="status" aria-live="polite">
           <span className="demo-badge">Demo data</span>
           <span>
-            Simulated services and incidents. Running this scenario does not affect real infrastructure.
+            Browser-only simulation: no backend or Gemini calls. Approve or reject recovery below when prompted.
           </span>
           <span className={`demo-phase phase-${demoPhase}`}>{demoPhase}</span>
         </div>
@@ -863,11 +903,11 @@ function DashboardPage({ operatorMode = false }) {
         </div>
       </section>
 
-      {operatorMode && (
+      {(operatorMode || demoData.approvals.length > 0) && (
         <section>
-          <h2 className="section-title">Remediation approvals</h2>
+          <h2 className="section-title">Remediation approvals{operatorMode ? '' : ' · Simulation'}</h2>
           <div className="approval-list">
-            {operatorData.approvals.slice(0, 8).map(approval => (
+            {activeData.approvals.slice(0, 8).map(approval => (
               <div className="approval-item" key={approval.approval_id}>
                 <div>
                   <div className="approval-title">{approval.action.replaceAll('_', ' ')}</div>
@@ -881,7 +921,7 @@ function DashboardPage({ operatorMode = false }) {
                       className="remove-button"
                       type="button"
                       disabled={decidingApprovalId === approval.approval_id}
-                      onClick={() => decideApproval(approval.approval_id, 'reject')}
+                      onClick={() => (operatorMode ? decideApproval : decideDemoApproval)(approval.approval_id, 'reject')}
                     >
                       Reject
                     </button>
@@ -889,7 +929,7 @@ function DashboardPage({ operatorMode = false }) {
                       className="approval-button"
                       type="button"
                       disabled={decidingApprovalId === approval.approval_id}
-                      onClick={() => decideApproval(approval.approval_id, 'approve')}
+                      onClick={() => (operatorMode ? decideApproval : decideDemoApproval)(approval.approval_id, 'approve')}
                     >
                       {decidingApprovalId === approval.approval_id ? 'Working…' : 'Approve'}
                     </button>
@@ -897,7 +937,7 @@ function DashboardPage({ operatorMode = false }) {
                 )}
               </div>
             ))}
-            {operatorData.approvals.length === 0 && (
+            {activeData.approvals.length === 0 && (
               <div className="empty-state">No remediation actions are waiting for approval.</div>
             )}
           </div>
