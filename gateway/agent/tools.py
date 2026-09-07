@@ -1,5 +1,9 @@
 # built-in
+import os
 import time
+
+# third-party
+import httpx
 
 # local
 from gateway.audit.store import get_events
@@ -108,4 +112,39 @@ def mark_resolved(
         "action_taken": action_taken,
         "operator_next_step": operator_next_step,
         "message": "Healing session marked as resolved.",
+    }
+
+
+async def create_incident_ticket(
+    upstream_url: str,
+    reason: str,
+    severity: str = "high",
+) -> dict:
+    webhook_url = os.getenv("INCIDENT_WEBHOOK_URL")
+    if not webhook_url:
+        raise RuntimeError("INCIDENT_WEBHOOK_URL is not configured")
+
+    headers = {"Content-Type": "application/json"}
+    webhook_token = os.getenv("INCIDENT_WEBHOOK_TOKEN")
+    if webhook_token:
+        headers["Authorization"] = f"Bearer {webhook_token}"
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(
+            webhook_url,
+            headers=headers,
+            json={
+                "title": f"Gateway incident: {upstream_url}",
+                "upstream_url": upstream_url,
+                "reason": reason,
+                "severity": severity,
+                "source": "self-healing-gateway",
+            },
+        )
+        response.raise_for_status()
+    return {
+        "status": "success",
+        "upstream_url": upstream_url,
+        "message": "Incident webhook accepted the ticket request.",
+        "response_status": response.status_code,
     }

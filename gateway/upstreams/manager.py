@@ -3,7 +3,12 @@ import asyncio
 from contextlib import asynccontextmanager
 
 # local
-from gateway.audit.store import delete_upstream, record_event, save_upstream
+from gateway.audit.store import (
+    delete_upstream,
+    record_event,
+    save_upstream,
+    update_upstream,
+)
 from gateway.resilience.circuit_breaker import CircuitBreaker
 from gateway.router import route_matches
 from gateway.upstreams.models import ManagedUpstream
@@ -67,8 +72,10 @@ class UpstreamManager:
     def active_request_count(self, upstream_id: str) -> int:
         return self._active_requests.get(upstream_id, 0)
 
-    def _assert_unique(self, candidate: dict) -> None:
+    def _assert_unique(self, candidate: dict, exclude_id: str | None = None) -> None:
         for route in [*self.routes, *self._draining_routes.values()]:
+            if route["upstream_id"] == exclude_id:
+                continue
             if route["name"] == candidate["name"]:
                 raise UpstreamConflictError("An upstream with this name already exists")
             if route["path"] == candidate["path"]:
@@ -92,6 +99,59 @@ class UpstreamManager:
             metadata={"upstream_id": route["upstream_id"], "path": route["path"]},
         )
         return dict(route)
+
+    async def update(self, upstream: ManagedUpstream) -> dict:
+        replacement = upstream.as_route()
+        upstream_id = replacement["upstream_id"]
+        async with self._condition:
+            current = next(
+                (
+                    route
+                    for route in self.routes
+                    if route["upstream_id"] == upstream_id and route["managed"]
+                ),
+                None,
+            )
+            if current is None:
+                raise UpstreamNotFoundError("Managed upstream was not found")
+            self._assert_unique(replacement, exclude_id=upstream_id)
+
+            self.routes.remove(current)
+            self._draining_routes[upstream_id] = current
+            self._sync_monitor_routes()
+            while self._active_requests.get(upstream_id, 0) > 0:
+                await self._condition.wait()
+
+            try:
+                await update_upstream(upstream)
+            except Exception:
+                self._draining_routes.pop(upstream_id, None)
+                self.routes.append(current)
+                self._sync_monitor_routes()
+                raise
+
+            self.cb_registry.pop(current["upstream_url"], None)
+            if self.health_monitor is not None:
+                self.health_monitor.health_status.pop(current["upstream_url"], None)
+            self.cb_registry[replacement["upstream_url"]] = self._build_breaker(
+                replacement
+            )
+            self.routes.append(replacement)
+            self._active_requests.pop(upstream_id, None)
+            self._draining_routes.pop(upstream_id, None)
+            self._sync_monitor_routes()
+
+        await record_event(
+            event_type="upstream_updated",
+            upstream_url=replacement["upstream_url"],
+            message=f"Operator updated {replacement['name']} at {replacement['path']}.",
+            metadata={
+                "upstream_id": upstream_id,
+                "previous_url": current["upstream_url"],
+                "previous_path": current["path"],
+            },
+        )
+        return dict(replacement)
 
     async def remove(self, upstream_id: str) -> dict:
         async with self._condition:

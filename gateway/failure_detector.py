@@ -8,6 +8,7 @@ from gateway.agent.gemini_agent import run_healing_session
 from gateway.agent.incident_policy import IncidentPolicy
 from gateway.audit.models import HealingSession
 from gateway.audit.store import get_events, record_event, save_session
+from gateway.observability import healing_sessions
 from gateway.time_utils import now_ist
 
 logger = logging.getLogger("gateway.failure_detector")
@@ -41,7 +42,8 @@ class FailureDetector:
 
             if was_healthy and not is_healthy:
                 logger.warning(
-                    f"🚨 Failure detected on {upstream_url}! Triggering healer..."
+                    "Upstream failure detected; starting healing session",
+                    extra={"upstream_url": upstream_url},
                 )
                 await record_event(
                     event_type="health_failed",
@@ -123,6 +125,13 @@ class FailureDetector:
                 cb_registry=self.cb_registry,
                 health_monitor=self.health_monitor,
             )
+            healing_sessions.add(
+                1,
+                {
+                    "upstream.url": upstream_url,
+                    "status": result.get("status", "unknown"),
+                },
+            )
 
             session: HealingSession = HealingSession(
                 session_id=session_id,
@@ -151,10 +160,8 @@ class FailureDetector:
                 },
             )
         except Exception:
-            import traceback
-
-            logger.error(
-                f"❌ Healing failed for {upstream_url}:\n{traceback.format_exc()}"
+            logger.exception(
+                "Healing session failed", extra={"upstream_url": upstream_url}
             )
         finally:
             self.healing_in_progress.discard(upstream_url)

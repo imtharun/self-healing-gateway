@@ -9,8 +9,6 @@ services:
       uvicorn gateway.app:app --host 0.0.0.0 --port 8000 --reload"
     environment:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      PAYMENTS_UPSTREAM_URL: http://payments:9001
-      ORDERS_UPSTREAM_URL: http://orders:9002
       GATEWAY_AUDIT_DB: /app/gateway/audit/audit.db
       GATEWAY_CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
       OPERATOR_PASSWORD_HASH: ${OPERATOR_PASSWORD_HASH:-}
@@ -19,9 +17,6 @@ services:
       GATEWAY_ALLOW_PRIVATE_UPSTREAMS: "true"
     ports:
       - "8000:8000"
-    depends_on:
-      - payments
-      - orders
 
   dashboard:
     image: node:22-slim
@@ -37,31 +32,3 @@ services:
       - "5173:5173"
     depends_on:
       - gateway
-
-  payments:
-    image: python:3.12-slim
-    working_dir: /app
-    volumes:
-      - ..:/app
-    command: >
-      sh -c "pip install -r gateway/requirements.txt &&
-      uvicorn gateway.mock_upstream:app --host 0.0.0.0 --port 9001 --reload"
-    environment:
-      MOCK_SERVICE_NAME: payments
-      ENABLE_MOCK_ADMIN: "true"
-    ports:
-      - "9001:9001"
-
-  orders:
-    image: python:3.12-slim
-    working_dir: /app
-    volumes:
-      - ..:/app
-    command: >
-      sh -c "pip install -r gateway/requirements.txt &&
-      uvicorn gateway.mock_upstream:app --host 0.0.0.0 --port 9002 --reload"
-    environment:
-      MOCK_SERVICE_NAME: orders
-      ENABLE_MOCK_ADMIN: "true"
-    ports:
-      - "9002:9002"

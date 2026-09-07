@@ -9,7 +9,7 @@ open_circuit_decl = types.FunctionDeclaration(
         properties={
             "upstream_url": types.Schema(
                 type=types.Type.STRING,
-                description="Full upstream URL e.g. http://localhost:9091",
+                description="Registered upstream URL, for example https://api.example.com",
             ),
         },
         required=["upstream_url"],
@@ -24,7 +24,7 @@ get_upstream_state_decl = types.FunctionDeclaration(
         properties={
             "upstream_url": types.Schema(
                 type=types.Type.STRING,
-                description="Full upstream URL e.g. http://localhost:9091",
+                description="Registered upstream URL, for example https://api.example.com",
             )
         },
         required=["upstream_url"],
@@ -42,7 +42,7 @@ get_recent_events_decl = types.FunctionDeclaration(
         properties={
             "upstream_url": types.Schema(
                 type=types.Type.STRING,
-                description="Full upstream URL e.g. http://localhost:9091",
+                description="Registered upstream URL, for example https://api.example.com",
             ),
             "limit": types.Schema(
                 type=types.Type.INTEGER,
@@ -61,7 +61,7 @@ close_circuit_decl = types.FunctionDeclaration(
         properties={
             "upstream_url": types.Schema(
                 type=types.Type.STRING,
-                description="Full upstream URL e.g. http://localhost:9091",
+                description="Registered upstream URL, for example https://api.example.com",
             )
         },
         required=["upstream_url"],
@@ -76,10 +76,30 @@ drain_upstream_decl = types.FunctionDeclaration(
         properties={
             "upstream_url": types.Schema(
                 type=types.Type.STRING,
-                description="Full upstream URL e.g. http://localhost:9091",
+                description="Registered upstream URL, for example https://api.example.com",
             )
         },
         required=["upstream_url"],
+    ),
+)
+
+create_incident_ticket_decl = types.FunctionDeclaration(
+    name="create_incident_ticket",
+    description="Requests creation of an external incident ticket. This requires human approval before the webhook is called.",
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "upstream_url": types.Schema(type=types.Type.STRING),
+            "reason": types.Schema(
+                type=types.Type.STRING,
+                description="Concise evidence-based reason for creating the incident.",
+            ),
+            "severity": types.Schema(
+                type=types.Type.STRING,
+                enum=["medium", "high", "critical"],
+            ),
+        },
+        required=["upstream_url", "reason", "severity"],
     ),
 )
 
@@ -91,7 +111,7 @@ mark_resolved_decl = types.FunctionDeclaration(
         properties={
             "upstream_url": types.Schema(
                 type=types.Type.STRING,
-                description="Full upstream URL e.g. http://localhost:9091",
+                description="Registered upstream URL, for example https://api.example.com",
             ),
             "reason": types.Schema(
                 type=types.Type.STRING,
@@ -140,6 +160,7 @@ REMEDIATION_TOOLS = types.Tool(
         open_circuit_decl,
         close_circuit_decl,
         drain_upstream_decl,
+        create_incident_ticket_decl,
         mark_resolved_decl,
     ]
 )

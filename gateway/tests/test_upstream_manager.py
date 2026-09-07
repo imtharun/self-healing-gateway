@@ -81,6 +81,38 @@ async def test_manager_rejects_duplicate_route(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_manager_updates_managed_upstream(monkeypatch):
+    updated = []
+    events = []
+
+    async def fake_update(upstream):
+        updated.append(upstream)
+
+    async def fake_event(**kwargs):
+        events.append(kwargs)
+
+    monkeypatch.setattr("gateway.upstreams.manager.update_upstream", fake_update)
+    monkeypatch.setattr("gateway.upstreams.manager.record_event", fake_event)
+    manager = UpstreamManager([], [build_upstream().as_route()])
+    monitor = FakeHealthMonitor()
+    monitor.health_status["https://inventory.example.com"] = True
+    manager.attach_monitor(monitor)
+
+    replacement = build_upstream(
+        name="catalog",
+        path="/api/catalog",
+        upstream_url="https://catalog.example.com",
+    )
+    route = await manager.update(replacement)
+
+    assert updated[0].name == "catalog"
+    assert route["path"] == "/api/catalog"
+    assert "https://inventory.example.com" not in manager.cb_registry
+    assert "https://catalog.example.com" in manager.cb_registry
+    assert events[0]["event_type"] == "upstream_updated"
+
+
+@pytest.mark.asyncio
 async def test_missing_route_does_not_suppress_caller_exception():
     manager = UpstreamManager([], [])
 

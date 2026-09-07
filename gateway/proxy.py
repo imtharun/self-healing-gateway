@@ -9,6 +9,7 @@ from fastapi import status
 
 # local
 from gateway.audit.store import record_event
+from gateway.observability import proxied_requests
 from gateway.resilience.circuit_breaker import CircuitBreaker
 from gateway.resilience.circuit_breaker import CircuitStatus
 
@@ -75,6 +76,14 @@ async def forward_request(
                 "current_state": cb.current_state.value,
             },
         )
+        proxied_requests.add(
+            1,
+            {
+                "upstream.url": upstream_url,
+                "http.method": request.method,
+                "http.status_code": 502,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Upstream request failed: {exc.__class__.__name__}",
@@ -106,6 +115,15 @@ async def forward_request(
                 ),
                 metadata={"path": request.url.path, "status_code": res.status_code},
             )
+
+    proxied_requests.add(
+        1,
+        {
+            "upstream.url": upstream_url,
+            "http.method": request.method,
+            "http.status_code": res.status_code,
+        },
+    )
 
     return Response(
         status_code=res.status_code,

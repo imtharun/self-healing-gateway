@@ -4,6 +4,9 @@ import asyncio
 # third-party
 import httpx
 
+# local
+from gateway.observability import health_checks
+
 
 class HealthMonitor:
     def __init__(self, routes: list, interval: int = 10):
@@ -39,8 +42,17 @@ class HealthMonitor:
 
         try:
             res = await client.get(health_url)
-            return upstream_url, res.status_code == 200
+            is_healthy = res.status_code == 200
+            health_checks.add(
+                1,
+                {"upstream.name": route.get("name", "unknown"), "healthy": is_healthy},
+            )
+            return upstream_url, is_healthy
         except httpx.HTTPError:
+            health_checks.add(
+                1,
+                {"upstream.name": route.get("name", "unknown"), "healthy": False},
+            )
             return upstream_url, False
 
     async def start(self) -> None:
