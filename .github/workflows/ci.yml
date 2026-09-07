@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Run backend tests
+        run: uv run --isolated --python 3.12 --with-requirements gateway/requirements.txt python -m pytest gateway/tests -q
+      - name: Run incident policy evaluations
+        run: uv run --isolated --python 3.12 --with-requirements gateway/requirements.txt python -m gateway.evals.run_evals
+      - name: Validate Docker Compose configuration
+        run: docker compose -f gateway/docker-compose.yml config --quiet
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build

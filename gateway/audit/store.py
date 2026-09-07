@@ -10,7 +10,7 @@ import aiosqlite
 import asyncpg
 
 # local
-from gateway.audit.models import GatewayEvent, HealingSession
+from gateway.audit.models import GatewayEvent, HealingSession, RemediationApproval
 from gateway.time_utils import now_ist
 from gateway.upstreams.models import ManagedUpstream
 
@@ -88,6 +88,18 @@ async def init_db() -> None:
                 created_at TEXT NOT NULL
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS remediation_approvals (
+                approval_id TEXT PRIMARY KEY,
+                action TEXT NOT NULL,
+                upstream_url TEXT NOT NULL,
+                arguments TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                status TEXT NOT NULL,
+                requested_at TEXT NOT NULL,
+                decided_at TEXT
+            )
+        """)
         await db.commit()
 
 
@@ -97,6 +109,7 @@ async def _init_postgres() -> None:
     sessions_table = _postgres_table("healing_sessions")
     events_table = _postgres_table("gateway_events")
     upstreams_table = _postgres_table("managed_upstreams")
+    approvals_table = _postgres_table("remediation_approvals")
     _pg_pool = await asyncpg.create_pool(
         dsn=DATABASE_URL,
         min_size=1,
@@ -139,6 +152,18 @@ async def _init_postgres() -> None:
                 failure_threshold INTEGER NOT NULL,
                 recovery_timeout INTEGER NOT NULL,
                 created_at TEXT NOT NULL
+            )
+        """)
+        await connection.execute(f"""
+            CREATE TABLE IF NOT EXISTS {approvals_table} (
+                approval_id TEXT PRIMARY KEY,
+                action TEXT NOT NULL,
+                upstream_url TEXT NOT NULL,
+                arguments TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                status TEXT NOT NULL,
+                requested_at TEXT NOT NULL,
+                decided_at TEXT
             )
         """)
         for column_name in (
@@ -407,3 +432,180 @@ async def delete_upstream(upstream_id: str) -> None:
         await db.commit()
         if cursor.rowcount == 0:
             raise KeyError(upstream_id)
+
+
+async def update_upstream(upstream: ManagedUpstream) -> None:
+    values = (
+        upstream.name,
+        upstream.path,
+        upstream.upstream_url,
+        upstream.health_check,
+        upstream.failure_threshold,
+        upstream.recovery_timeout,
+        upstream.upstream_id,
+    )
+    if _postgres_enabled():
+        table = _postgres_table("managed_upstreams")
+        result = await _require_pg_pool().execute(
+            f"""
+                UPDATE {table}
+                SET name = $1, path = $2, upstream_url = $3,
+                    health_check = $4, failure_threshold = $5,
+                    recovery_timeout = $6
+                WHERE upstream_id = $7
+            """,
+            *values,
+        )
+        if result == "UPDATE 0":
+            raise KeyError(upstream.upstream_id)
+        return
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+                UPDATE managed_upstreams
+                SET name = ?, path = ?, upstream_url = ?, health_check = ?,
+                    failure_threshold = ?, recovery_timeout = ?
+                WHERE upstream_id = ?
+            """,
+            values,
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            raise KeyError(upstream.upstream_id)
+
+
+async def save_approval(approval: RemediationApproval) -> None:
+    values = (
+        approval.approval_id,
+        approval.action,
+        approval.upstream_url,
+        json.dumps(approval.arguments),
+        approval.reason,
+        approval.status,
+        approval.requested_at.isoformat(),
+        approval.decided_at.isoformat() if approval.decided_at else None,
+    )
+    if _postgres_enabled():
+        table = _postgres_table("remediation_approvals")
+        await _require_pg_pool().execute(
+            f"""
+                INSERT INTO {table} (
+                    approval_id, action, upstream_url, arguments, reason,
+                    status, requested_at, decided_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            """,
+            *values,
+        )
+        return
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+                INSERT INTO remediation_approvals (
+                    approval_id, action, upstream_url, arguments, reason,
+                    status, requested_at, decided_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            values,
+        )
+        await db.commit()
+
+
+async def get_approvals(limit: int = 100) -> list[dict]:
+    limit = max(1, min(limit, 200))
+    if _postgres_enabled():
+        table = _postgres_table("remediation_approvals")
+        rows = await _require_pg_pool().fetch(
+            f"SELECT * FROM {table} ORDER BY requested_at DESC LIMIT $1", limit
+        )
+        results = [dict(row) for row in rows]
+    else:
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute(
+                "SELECT * FROM remediation_approvals "
+                "ORDER BY requested_at DESC LIMIT ?",
+                (limit,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                columns = [column[0] for column in cursor.description]
+                results = [dict(zip(columns, row)) for row in rows]
+    for result in results:
+        result["arguments"] = json.loads(result["arguments"] or "{}")
+    return results
+
+
+async def get_approval(approval_id: str) -> dict | None:
+    if _postgres_enabled():
+        table = _postgres_table("remediation_approvals")
+        row = await _require_pg_pool().fetchrow(
+            f"SELECT * FROM {table} WHERE approval_id = $1", approval_id
+        )
+        result = dict(row) if row else None
+    else:
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute(
+                "SELECT * FROM remediation_approvals WHERE approval_id = ?",
+                (approval_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                columns = [column[0] for column in cursor.description]
+                result = dict(zip(columns, row)) if row else None
+    if result is not None:
+        result["arguments"] = json.loads(result["arguments"] or "{}")
+    return result
+
+
+async def decide_approval(approval_id: str, decision: str) -> None:
+    decided_at = now_ist().isoformat()
+    if _postgres_enabled():
+        table = _postgres_table("remediation_approvals")
+        result = await _require_pg_pool().execute(
+            f"""
+                UPDATE {table} SET status = $1, decided_at = $2
+                WHERE approval_id = $3 AND status = 'pending'
+            """,
+            decision,
+            decided_at,
+            approval_id,
+        )
+        if result == "UPDATE 0":
+            raise KeyError(approval_id)
+        return
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+                UPDATE remediation_approvals SET status = ?, decided_at = ?
+                WHERE approval_id = ? AND status = 'pending'
+            """,
+            (decision, decided_at, approval_id),
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            raise KeyError(approval_id)
+
+
+async def set_approval_status(approval_id: str, approval_status: str) -> None:
+    decided_at = now_ist().isoformat()
+    if _postgres_enabled():
+        table = _postgres_table("remediation_approvals")
+        result = await _require_pg_pool().execute(
+            f"UPDATE {table} SET status = $1, decided_at = $2 WHERE approval_id = $3",
+            approval_status,
+            decided_at,
+            approval_id,
+        )
+        if result == "UPDATE 0":
+            raise KeyError(approval_id)
+        return
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE remediation_approvals SET status = ?, decided_at = ? "
+            "WHERE approval_id = ?",
+            (approval_status, decided_at, approval_id),
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            raise KeyError(approval_id)

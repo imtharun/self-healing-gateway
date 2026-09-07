@@ -25,3 +25,14 @@ class GatewayEvent(BaseModel):
     occurred_at: datetime
     message: str
     metadata: dict = Field(default_factory=dict)
+
+
+class RemediationApproval(BaseModel):
+    approval_id: str
+    action: str
+    upstream_url: str
+    arguments: dict = Field(default_factory=dict)
+    reason: str
+    status: str = "pending"
+    requested_at: datetime
+    decided_at: datetime | None = None

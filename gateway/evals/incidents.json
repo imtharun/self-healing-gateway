@@ -1,0 +1,30 @@
+[
+  {
+    "name": "first health failure",
+    "events": [],
+    "expected_classification": "first_failure",
+    "expected_action": "open_circuit",
+    "expected_human_review": false
+  },
+  {
+    "name": "flapping upstream",
+    "events": [
+      {"event_type": "health_failed"},
+      {"event_type": "upstream_request_failed"}
+    ],
+    "expected_classification": "flapping_service",
+    "expected_action": "open_circuit",
+    "expected_human_review": true
+  },
+  {
+    "name": "repeated upstream failure",
+    "events": [
+      {"event_type": "health_failed"},
+      {"event_type": "upstream_request_failed"},
+      {"event_type": "healing_completed"}
+    ],
+    "expected_classification": "repeated_failure",
+    "expected_action": "drain_upstream",
+    "expected_human_review": true
+  }
+]

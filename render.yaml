@@ -7,6 +7,7 @@ services:
     dockerfilePath: ./gateway/Dockerfile
     dockerContext: .
     healthCheckPath: /health
+    autoDeployTrigger: checksPass
     envVars:
       - key: DATABASE_URL
         sync: false
@@ -14,10 +15,6 @@ services:
         value: self_healing_gateway
       - key: GATEWAY_CORS_ORIGINS
         value: https://gateway.tharunprasath.com
-      - key: PAYMENTS_UPSTREAM_URL
-        sync: false
-      - key: ORDERS_UPSTREAM_URL
-        sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: OPERATOR_PASSWORD_HASH
@@ -26,3 +23,7 @@ services:
         generateValue: true
       - key: GATEWAY_ALLOW_PRIVATE_UPSTREAMS
         value: "false"
+      - key: LOG_LEVEL
+        value: INFO
+      - key: OTEL_SERVICE_NAME
+        value: self-healing-gateway

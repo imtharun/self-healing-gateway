@@ -1,5 +1,6 @@
 # built-in
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager, suppress
 
@@ -24,12 +25,19 @@ from gateway.auth import (
 )
 from gateway.audit.store import (
     close_db,
+    decide_approval,
+    get_approval,
+    get_approvals,
     get_events,
     get_sessions,
     get_upstreams,
     init_db,
+    record_event,
+    set_approval_status,
 )
+from gateway.agent.tools import close_circuit, create_incident_ticket, drain_upstream
 from gateway.failure_detector import FailureDetector
+from gateway.observability import configure_observability
 from gateway.proxy import forward_request
 from gateway.resilience.health_monitor import HealthMonitor
 from gateway.router import load_config
@@ -45,7 +53,7 @@ from gateway.upstreams.validation import validate_upstream_url
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    print("Startup Complete")
+    logger.info("Gateway startup complete")
 
     config = load_config()
     manager = UpstreamManager(
@@ -71,14 +79,20 @@ async def lifespan(app: FastAPI):
     with suppress(asyncio.CancelledError):
         await detector_task
     await close_db()
-    print("Shutdown Complete")
+    logger.info("Gateway shutdown complete")
 
 
 app = FastAPI(lifespan=lifespan)
+configure_observability(app)
+logger = logging.getLogger("gateway.api")
 
 
 class OperatorLogin(BaseModel):
     password: str = Field(min_length=1, max_length=256)
+
+
+class ApprovalDecision(BaseModel):
+    decision: str = Field(pattern="^(approve|reject)$")
 
 cors_origins = [
     origin.strip()
@@ -253,6 +267,49 @@ async def remove_operator_upstream(
     return {"removed": True, "upstream": removed}
 
 
+@app.put("/operator/upstreams/{upstream_id}")
+async def update_operator_upstream(
+    upstream_id: str,
+    payload: UpstreamCreate,
+    request: Request,
+    _operator: dict = Depends(require_operator),
+):
+    require_csrf_header(request)
+    try:
+        upstream_url = await validate_upstream_url(payload.upstream_url)
+        existing = next(
+            (
+                item
+                for item in app.state.upstream_manager.list_upstreams()
+                if item["upstream_id"] == upstream_id and item["managed"]
+            ),
+            None,
+        )
+        if existing is None:
+            raise UpstreamNotFoundError("Managed upstream was not found")
+        upstream = ManagedUpstream(
+            **{
+                **payload.model_dump(),
+                "upstream_url": upstream_url,
+                "upstream_id": upstream_id,
+                "created_at": existing["created_at"],
+            }
+        )
+        return await app.state.upstream_manager.update(upstream)
+    except UpstreamConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+    except UpstreamNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+
 @app.get("/audit/sessions")
 async def audit_sessions(_operator: dict = Depends(require_operator)):
     return await get_sessions()
@@ -261,6 +318,94 @@ async def audit_sessions(_operator: dict = Depends(require_operator)):
 @app.get("/audit/events")
 async def audit_events(_operator: dict = Depends(require_operator)):
     return await get_events()
+
+
+@app.get("/operator/approvals")
+async def operator_approvals(_operator: dict = Depends(require_operator)):
+    return await get_approvals()
+
+
+@app.post("/operator/approvals/{approval_id}/decision")
+async def decide_operator_approval(
+    approval_id: str,
+    payload: ApprovalDecision,
+    request: Request,
+    _operator: dict = Depends(require_operator),
+):
+    require_csrf_header(request)
+    approval = await get_approval(approval_id)
+    if approval is None or approval["status"] != "pending":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pending approval was not found",
+        )
+
+    if payload.decision == "reject":
+        try:
+            await decide_approval(approval_id, "rejected")
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This approval has already been decided",
+            ) from exc
+        await record_event(
+            event_type="approval_rejected",
+            upstream_url=approval["upstream_url"],
+            message=f"Operator rejected {approval['action'].replace('_', ' ')}.",
+            metadata={"approval_id": approval_id},
+        )
+        return {"approval_id": approval_id, "status": "rejected"}
+
+    try:
+        await decide_approval(approval_id, "approved")
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This approval has already been decided",
+        ) from exc
+
+    action = approval["action"]
+    upstream_url = approval["upstream_url"]
+    try:
+        if upstream_url not in app.state.cb_registry:
+            raise ValueError("The upstream is no longer registered")
+        if action == "close_circuit":
+            result = close_circuit(upstream_url, app.state.cb_registry)
+        elif action == "drain_upstream":
+            result = drain_upstream(upstream_url, app.state.cb_registry)
+        elif action == "create_incident_ticket":
+            result = await create_incident_ticket(
+                upstream_url=upstream_url,
+                reason=approval["arguments"].get("reason", approval["reason"]),
+                severity=approval["arguments"].get("severity", "high"),
+            )
+        else:
+            raise ValueError("Unsupported approval action")
+    except Exception as exc:
+        logger.exception(
+            "Approved remediation failed",
+            extra={"approval_id": approval_id, "action": approval["action"]},
+        )
+        await set_approval_status(approval_id, "failed")
+        await record_event(
+            event_type="approval_failed",
+            upstream_url=approval["upstream_url"],
+            message="An approved action failed during execution.",
+            metadata={"approval_id": approval_id, "action": approval["action"]},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The approved action failed. Review backend logs for details.",
+        ) from exc
+
+    await set_approval_status(approval_id, "executed")
+    await record_event(
+        event_type="approval_executed",
+        upstream_url=approval["upstream_url"],
+        message=f"Operator approved and executed {approval['action'].replace('_', ' ')}.",
+        metadata={"approval_id": approval_id, "result": result},
+    )
+    return {"approval_id": approval_id, "status": "executed", "result": result}
 
 
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE"])

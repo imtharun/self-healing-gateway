@@ -9,10 +9,9 @@ from google.genai import types
 
 # local
 from gateway.agent.prompts import SYSTEM_PROMPT
+from gateway.agent.approvals import HIGH_IMPACT_ACTIONS, request_approval
 from gateway.agent.tool_registry import REMEDIATION_TOOLS
 from gateway.agent.tools import (
-    close_circuit,
-    drain_upstream,
     get_recent_events,
     get_upstream_state,
     mark_resolved,
@@ -41,10 +40,19 @@ def _validate_upstream(upstream_url: str, cb_registry: dict) -> str:
 async def execute_tool(fn_name: str, fn_args: dict, cb_registry, health_monitor) -> dict:
     upstream_url = _validate_upstream(fn_args.get("upstream_url", ""), cb_registry)
 
+    if fn_name in HIGH_IMPACT_ACTIONS:
+        reason = fn_args.get("reason") or (
+            f"The AI agent proposed {fn_name.replace('_', ' ')} for {upstream_url}."
+        )
+        return await request_approval(
+            action=fn_name,
+            upstream_url=upstream_url,
+            arguments=fn_args,
+            reason=reason,
+        )
+
     if fn_name == "open_circuit":
         return open_circuit(upstream_url=upstream_url, cb_registry=cb_registry)
-    elif fn_name == "close_circuit":
-        return close_circuit(upstream_url=upstream_url, cb_registry=cb_registry)
     elif fn_name == "get_upstream_state":
         return get_upstream_state(
             upstream_url=upstream_url,
@@ -54,8 +62,6 @@ async def execute_tool(fn_name: str, fn_args: dict, cb_registry, health_monitor)
     elif fn_name == "get_recent_events":
         limit = int(fn_args.get("limit") or 10)
         return await get_recent_events(upstream_url=upstream_url, limit=limit)
-    elif fn_name == "drain_upstream":
-        return drain_upstream(upstream_url=upstream_url, cb_registry=cb_registry)
     elif fn_name == "mark_resolved":
         reason = fn_args.get("reason") or "No reason provided by agent"
         return mark_resolved(
@@ -143,6 +149,9 @@ async def run_healing_session(
                         "reason": str(exc),
                         "actions_taken": actions_taken,
                     }
+
+                if result.get("status") == "pending_approval":
+                    actions_taken[-1] = f"requested_{fn_name}"
 
                 # If agent called mark_resolved → STOP
                 if fn_name == "mark_resolved":

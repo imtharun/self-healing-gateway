@@ -10,22 +10,61 @@ const API_URL = (
     : '/backend'
 ).replace(/\/$/, '')
 
+const RETRYABLE_GATEWAY_STATUSES = new Set([429, 502, 503, 504])
+const RETRY_DELAYS = [3000, 7000, 15000]
+
+const waitForRetry = (delay, signal) => new Promise((resolve, reject) => {
+  const timer = setTimeout(resolve, delay)
+  if (!signal) return
+  signal.addEventListener('abort', () => {
+    clearTimeout(timer)
+    reject(new DOMException('Request aborted', 'AbortError'))
+  }, { once: true })
+})
+
 const apiRequest = async (path, options = {}) => {
-  const response = await fetch(`${API_URL}${path}`, {
-    ...options,
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers
+  for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt += 1) {
+    let response
+    try {
+      response = await fetch(`${API_URL}${path}`, {
+        ...options,
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers
+        }
+      })
+    } catch (error) {
+      if (error.name === 'AbortError') throw error
+      if (attempt < RETRY_DELAYS.length) {
+        await waitForRetry(RETRY_DELAYS[attempt], options.signal)
+        continue
+      }
+      throw new Error('The backend is still waking up. Wait a moment and try again.')
     }
-  })
-  const data = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    const error = new Error(data.detail || 'The gateway request failed.')
+    const responseText = await response.text()
+    let data = {}
+    try {
+      data = responseText ? JSON.parse(responseText) : {}
+    } catch {
+      data = {}
+    }
+    if (response.ok) return data
+
+    if (RETRYABLE_GATEWAY_STATUSES.has(response.status) && attempt < RETRY_DELAYS.length) {
+      await waitForRetry(RETRY_DELAYS[attempt], options.signal)
+      continue
+    }
+
+    const wakingMessage = RETRYABLE_GATEWAY_STATUSES.has(response.status)
+      ? 'The backend is still waking up. Wait a moment and try again.'
+      : 'The gateway request failed.'
+    const error = new Error(
+      data.detail || (RETRYABLE_GATEWAY_STATUSES.has(response.status) ? wakingMessage : responseText) || wakingMessage
+    )
     error.status = response.status
     throw error
   }
-  return data
 }
 
 const ACTION_LABELS = {
@@ -33,6 +72,9 @@ const ACTION_LABELS = {
   open_circuit: 'Opened circuit',
   close_circuit: 'Closed circuit',
   drain_upstream: 'Drained upstream',
+  requested_close_circuit: 'Requested circuit close',
+  requested_drain_upstream: 'Requested drain',
+  requested_create_incident_ticket: 'Requested incident ticket',
   mark_resolved: 'Marked resolved'
 }
 
@@ -47,7 +89,12 @@ const EVENT_LABELS = {
   upstream_request_failed: 'Request failed',
   healing_completed: 'Healing completed',
   upstream_added: 'Upstream added',
-  upstream_removed: 'Upstream removed'
+  upstream_removed: 'Upstream removed',
+  upstream_updated: 'Upstream updated',
+  approval_requested: 'Approval requested',
+  approval_rejected: 'Approval rejected',
+  approval_executed: 'Approval executed',
+  approval_failed: 'Approval failed'
 }
 
 const EMPTY_UPSTREAM_FORM = {
@@ -175,7 +222,8 @@ function DashboardPage({ operatorMode = false }) {
     gatewaySummary: null,
     gatewayEvents: [],
     auditSessions: [],
-    upstreams: []
+    upstreams: [],
+    approvals: []
   })
   const [demoPhase, setDemoPhase] = useState('ready')
   const [lastUpdated, setLastUpdated] = useState(() => operatorMode ? null : new Date())
@@ -185,11 +233,15 @@ function DashboardPage({ operatorMode = false }) {
   const [errorMessage, setErrorMessage] = useState('')
   const [operatorAuthenticated, setOperatorAuthenticated] = useState(!operatorMode)
   const [showUpstreamForm, setShowUpstreamForm] = useState(false)
+  const [editingUpstreamId, setEditingUpstreamId] = useState(null)
   const [upstreamForm, setUpstreamForm] = useState(EMPTY_UPSTREAM_FORM)
   const [upstreamActionError, setUpstreamActionError] = useState('')
   const [isSavingUpstream, setIsSavingUpstream] = useState(false)
   const [pendingRemovalId, setPendingRemovalId] = useState(null)
   const [removingUpstreamId, setRemovingUpstreamId] = useState(null)
+  const [decidingApprovalId, setDecidingApprovalId] = useState(null)
+  const [testingUpstreamId, setTestingUpstreamId] = useState(null)
+  const [upstreamTestResult, setUpstreamTestResult] = useState({})
   const timersRef = useRef([])
 
   useEffect(() => {
@@ -205,14 +257,15 @@ function DashboardPage({ operatorMode = false }) {
     try {
       await apiRequest('/auth/session', { signal })
       setOperatorAuthenticated(true)
-      const [gatewayStatus, gatewaySummary, auditSessions, gatewayEvents, upstreams] = await Promise.all([
+      const [gatewayStatus, gatewaySummary, auditSessions, gatewayEvents, upstreams, approvals] = await Promise.all([
         apiRequest('/gateway/health-status', { signal }),
         apiRequest('/gateway/summary', { signal }),
         apiRequest('/audit/sessions', { signal }),
         apiRequest('/audit/events', { signal }),
-        apiRequest('/operator/upstreams', { signal })
+        apiRequest('/operator/upstreams', { signal }),
+        apiRequest('/operator/approvals', { signal })
       ])
-      setOperatorData({ gatewayStatus, gatewaySummary, auditSessions, gatewayEvents, upstreams })
+      setOperatorData({ gatewayStatus, gatewaySummary, auditSessions, gatewayEvents, upstreams, approvals })
       setErrorMessage('')
       setLastUpdated(new Date())
     } catch (error) {
@@ -259,18 +312,73 @@ function DashboardPage({ operatorMode = false }) {
     setIsSavingUpstream(true)
     setUpstreamActionError('')
     try {
-      await apiRequest('/operator/upstreams', {
-        method: 'POST',
+      const requestPath = editingUpstreamId
+        ? `/operator/upstreams/${encodeURIComponent(editingUpstreamId)}`
+        : '/operator/upstreams'
+      await apiRequest(requestPath, {
+        method: editingUpstreamId ? 'PUT' : 'POST',
         headers: { 'X-Operator-CSRF': '1' },
         body: JSON.stringify(upstreamForm)
       })
       setUpstreamForm(EMPTY_UPSTREAM_FORM)
       setShowUpstreamForm(false)
+      setEditingUpstreamId(null)
       await fetchOperatorData()
     } catch (error) {
-      setUpstreamActionError(error.message || 'Unable to add the upstream.')
+      setUpstreamActionError(error.message || 'Unable to save the upstream.')
     } finally {
       setIsSavingUpstream(false)
+    }
+  }
+
+  const editUpstream = (upstream) => {
+    setUpstreamForm({
+      name: upstream.name,
+      path: upstream.path,
+      upstream_url: upstream.upstream_url,
+      health_check: upstream.health_check,
+      failure_threshold: upstream.failure_threshold,
+      recovery_timeout: upstream.recovery_timeout
+    })
+    setEditingUpstreamId(upstream.upstream_id)
+    setShowUpstreamForm(true)
+    setUpstreamActionError('')
+  }
+
+  const closeUpstreamForm = () => {
+    setShowUpstreamForm(false)
+    setEditingUpstreamId(null)
+    setUpstreamForm(EMPTY_UPSTREAM_FORM)
+    setUpstreamActionError('')
+  }
+
+  const useTestPreset = () => {
+    setUpstreamForm({
+      name: 'pokeapi',
+      path: '/api/v2',
+      upstream_url: 'https://pokeapi.co',
+      health_check: '/api/v2/pokemon/pikachu',
+      failure_threshold: 3,
+      recovery_timeout: 30
+    })
+  }
+
+  const testUpstream = async (upstream) => {
+    setTestingUpstreamId(upstream.upstream_id)
+    setUpstreamTestResult(current => ({ ...current, [upstream.upstream_id]: '' }))
+    try {
+      await apiRequest(upstream.path)
+      setUpstreamTestResult(current => ({
+        ...current,
+        [upstream.upstream_id]: 'Proxy request succeeded'
+      }))
+    } catch (error) {
+      setUpstreamTestResult(current => ({
+        ...current,
+        [upstream.upstream_id]: error.message || 'Proxy request failed'
+      }))
+    } finally {
+      setTestingUpstreamId(null)
     }
   }
 
@@ -288,6 +396,23 @@ function DashboardPage({ operatorMode = false }) {
       setUpstreamActionError(error.message || 'Unable to remove the upstream.')
     } finally {
       setRemovingUpstreamId(null)
+    }
+  }
+
+  const decideApproval = async (approvalId, decision) => {
+    setDecidingApprovalId(approvalId)
+    setErrorMessage('')
+    try {
+      await apiRequest(`/operator/approvals/${encodeURIComponent(approvalId)}/decision`, {
+        method: 'POST',
+        headers: { 'X-Operator-CSRF': '1' },
+        body: JSON.stringify({ decision })
+      })
+      await fetchOperatorData()
+    } catch (error) {
+      setErrorMessage(error.message || 'Unable to record the approval decision.')
+    } finally {
+      setDecidingApprovalId(null)
     }
   }
 
@@ -573,8 +698,8 @@ function DashboardPage({ operatorMode = false }) {
               className="section-action"
               type="button"
               onClick={() => {
-                setShowUpstreamForm(current => !current)
-                setUpstreamActionError('')
+                if (showUpstreamForm) closeUpstreamForm()
+                else setShowUpstreamForm(true)
               }}
             >
               {showUpstreamForm ? 'Cancel' : 'Add upstream'}
@@ -586,11 +711,16 @@ function DashboardPage({ operatorMode = false }) {
           <form className="upstream-form" onSubmit={addUpstream}>
             <div className="upstream-form-intro">
               <div>
-                <h3>Register upstream</h3>
-                <p>The route becomes live immediately and remains configured after a restart.</p>
+                <h3>{editingUpstreamId ? 'Edit upstream' : 'Register upstream'}</h3>
+                <p>Changes become live safely after active requests finish and remain configured after a restart.</p>
               </div>
               <span className="demo-badge protected-badge">Protected action</span>
             </div>
+            {!editingUpstreamId && (
+              <button className="preset-button" type="button" onClick={useTestPreset}>
+                Use PokéAPI test preset
+              </button>
+            )}
             <div className="upstream-form-grid">
               <label className="field-group">
                 <span>Name</span>
@@ -620,7 +750,9 @@ function DashboardPage({ operatorMode = false }) {
             {upstreamActionError && <div className="auth-error" role="alert">{upstreamActionError}</div>}
             <div className="form-actions">
               <button className="auth-submit compact-submit" type="submit" disabled={isSavingUpstream}>
-                {isSavingUpstream ? 'Registering…' : 'Register upstream'}
+                {isSavingUpstream
+                  ? (editingUpstreamId ? 'Saving…' : 'Registering…')
+                  : (editingUpstreamId ? 'Save changes' : 'Register upstream')}
               </button>
             </div>
           </form>
@@ -676,9 +808,25 @@ function DashboardPage({ operatorMode = false }) {
                       <button className="text-button" type="button" onClick={() => setPendingRemovalId(null)}>Cancel</button>
                     </>
                   ) : (
-                    <button className="remove-button" type="button" onClick={() => setPendingRemovalId(metadata.upstream_id)}>
-                      Remove
-                    </button>
+                    <>
+                      <button
+                        className="remove-button"
+                        type="button"
+                        disabled={testingUpstreamId === metadata.upstream_id}
+                        onClick={() => testUpstream(metadata)}
+                      >
+                        {testingUpstreamId === metadata.upstream_id ? 'Testing…' : 'Test'}
+                      </button>
+                      <button className="remove-button" type="button" onClick={() => editUpstream(metadata)}>
+                        Edit
+                      </button>
+                      <button className="remove-button" type="button" onClick={() => setPendingRemovalId(metadata.upstream_id)}>
+                        Remove
+                      </button>
+                    </>
+                  )}
+                  {upstreamTestResult[metadata.upstream_id] && (
+                    <span className="test-result">{upstreamTestResult[metadata.upstream_id]}</span>
                   )}
                 </div>
               )}
@@ -714,6 +862,47 @@ function DashboardPage({ operatorMode = false }) {
           )}
         </div>
       </section>
+
+      {operatorMode && (
+        <section>
+          <h2 className="section-title">Remediation approvals</h2>
+          <div className="approval-list">
+            {operatorData.approvals.slice(0, 8).map(approval => (
+              <div className="approval-item" key={approval.approval_id}>
+                <div>
+                  <div className="approval-title">{approval.action.replaceAll('_', ' ')}</div>
+                  <div className="approval-reason">{approval.reason}</div>
+                  <div className="upstream-route">{approval.upstream_url} · {formatDate(approval.requested_at)}</div>
+                </div>
+                <span className={`approval-status approval-${approval.status}`}>{approval.status}</span>
+                {approval.status === 'pending' && (
+                  <div className="approval-actions">
+                    <button
+                      className="remove-button"
+                      type="button"
+                      disabled={decidingApprovalId === approval.approval_id}
+                      onClick={() => decideApproval(approval.approval_id, 'reject')}
+                    >
+                      Reject
+                    </button>
+                    <button
+                      className="approval-button"
+                      type="button"
+                      disabled={decidingApprovalId === approval.approval_id}
+                      onClick={() => decideApproval(approval.approval_id, 'approve')}
+                    >
+                      {decidingApprovalId === approval.approval_id ? 'Working…' : 'Approve'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+            {operatorData.approvals.length === 0 && (
+              <div className="empty-state">No remediation actions are waiting for approval.</div>
+            )}
+          </div>
+        </section>
+      )}
 
       <section>
         <h2 className="section-title">Audit Log</h2>

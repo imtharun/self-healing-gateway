@@ -53,3 +53,25 @@ async def test_execute_tool_preserves_gemini_reason():
     assert result["suspected_cause"] == "Health endpoint failed"
     assert result["action_taken"] == "Opened circuit"
     assert result["operator_next_step"] == "Inspect service logs"
+
+
+@pytest.mark.asyncio
+async def test_high_impact_tool_requests_human_approval(monkeypatch):
+    requests = []
+
+    async def fake_request_approval(**kwargs):
+        requests.append(kwargs)
+        return {"status": "pending_approval", "approval_id": "approval-1"}
+
+    monkeypatch.setattr(
+        "gateway.agent.gemini_agent.request_approval", fake_request_approval
+    )
+    result = await execute_tool(
+        "drain_upstream",
+        {"upstream_url": "http://known.local", "reason": "Repeated failures"},
+        {"http://known.local": CircuitBreaker("known")},
+        health_monitor=None,
+    )
+
+    assert result["status"] == "pending_approval"
+    assert requests[0]["action"] == "drain_upstream"
